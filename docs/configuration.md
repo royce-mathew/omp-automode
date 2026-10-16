@@ -30,7 +30,7 @@ This file is project-local. Pi reads it only after project trust. Do not commit 
 
 Set a global default classifier model in `~/.pi/agent/extensions/pi-automode/config.json`. For a trusted project, override it in `.pi/automode.local.json`.
 
-`classifierReasoningLevel` requests `low`, `medium`, `high`, `xhigh`, or `max` reasoning for both classifier stages. If the key is absent, pi-automode sends no reasoning preference. The server then selects the level.
+For Pi/OMP chat models, `classifierReasoningLevel` requests `low`, `medium`, `high`, `xhigh`, or `max` reasoning for both classifier stages. If the key is absent, pi-automode sends no reasoning preference. The server then selects the level.
 
 Pi AI clamps an unsupported value to the nearest level that the selected model supports. A model without reasoning support resolves to `off`. `low` matches the reasoning effort of Codex Auto Review.
 
@@ -172,9 +172,36 @@ For other allow matching, an input can contain at most 1,048,576 UTF-16 code uni
 
 See [Permission recipes](permission-recipes.md) for narrow examples of Bash permissions, directory changes, command chains, redirects, and classifier guidance.
 
+## TypeSafe Jev
+
+Select the backend through the existing `autoMode.classifierModel` setting:
+
+```json
+{
+  "autoMode": {
+    "classifierModel": "typesafe/jev-latest",
+    "classifierTimeoutMs": 20000
+  }
+}
+```
+
+Set `TYPESAFE_API_KEY` in the process environment before starting OMP or Pi. Do not put API keys in automode rules or configuration files. The extension sends the key only as a Bearer authorization header to `https://api.typesafe.ai/v1/systemone`.
+
+`typesafe/jev-latest`, `typesafe/jev-preview`, and pinned IDs such as `typesafe/jev-1.14.0` use the native TypeSafe backend. No `models.json` entry or `/login` provider is required. `/automode model typesafe/jev-latest` saves the selection globally and requires the environment key. When the key is present, the picker includes `jev-latest` and the currently configured Jev version.
+
+Any other `provider/model-id` uses the existing Pi/OMP registry and provider credentials. Omitting `classifierModel` keeps the current session model as the default. Setting a TypeSafe key alone does not switch backends.
+
+Jev evaluates four typed questions in one request: hard-deny match, soft-deny match, coverage by ALLOW exceptions, and direct user authorization for all remaining soft-denied effects. Hard denies always block. A soft deny blocks unless every affected operation is covered by an exception or direct user authorization. Actions without a deny match are allowed.
+
+Jev cannot generate a free-text explanation; denial reasons identify the policy tier. `classifierReasoningLevel` and `fastClassifierMaxTokens` do not alter Jev requests. An explicitly requested reasoning level is logged with effective level `off`. `classifierTimeoutMs` covers the entire native request, including response-body consumption, and parent cancellation still applies.
+
+The extension keeps the full action and uses the existing bounded transcript. Conservative context estimates enforce TypeSafe's default 32k per-question and 64k per-request limits without truncating the action. It does not enable TypeSafe's experimental long-context header.
+
+Missing credentials, transport errors, non-success HTTP responses, malformed or incomplete typed answers, context overflow, cancellation, and deadlines block the action. They never fall back to a different classifier. Existing permission, deterministic hard-deny, and local allow tiers run before either backend.
+
 ## Custom models (like OpenRouter's presets)
 
-Pi-automode can only select models that Pi exposes through its model registry. Add unlisted models to `~/.pi/agent/models.json`.
+Except for the native Jev backend above, pi-automode selects models through Pi's model registry. Add unlisted chat models to `~/.pi/agent/models.json`.
 
 For example, register an OpenRouter preset in the built-in `openrouter` provider:
 

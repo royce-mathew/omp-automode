@@ -16,7 +16,8 @@ import {
   CLASSIFIER_SYSTEM_PROMPT,
   DEFAULT_FAST_CLASSIFIER_MAX_TOKENS,
 } from "./constants.ts";
-import { formatModelSpec, parseModelSpec } from "./model.ts";
+import { formatModelSpec, jevModelId, parseModelSpec } from "./model.ts";
+import { classifyWithJev } from "./jev.ts";
 import { buildClassifierTranscript } from "./transcript.ts";
 import type {
   ClassificationDecision,
@@ -854,6 +855,19 @@ export const defaultClassifyAction: ClassifyAction = async (
   action,
   loadedContext,
 ): Promise<ClassifyResult> => {
+  const systemPrompt = buildClassifierPrompt(config);
+  const transcript = buildClassifierTranscript(ctx, {
+    maxUserTokens: config.maxUserTranscriptTokens,
+    maxToolTokens: config.maxToolTranscriptTokens,
+  });
+  const contextText = `<loaded-project-instructions>\n${
+    loadedContext || "(none)"
+  }\n</loaded-project-instructions>\n\n<classifier-transcript>\n${
+    transcript || "(none)"
+  }\n</classifier-transcript>`;
+  if (jevModelId(config.classifierModel)) {
+    return classifyWithJev(config, action, contextText, systemPrompt, ctx.signal);
+  }
   const resolution = await resolveClassifier(ctx, config);
   if (!resolution.classifier || !resolution.completionPlan) {
     return {
@@ -866,16 +880,6 @@ export const defaultClassifyAction: ClassifyAction = async (
   const classifier = resolution.classifier;
   const completionPlan = resolution.completionPlan;
 
-  const systemPrompt = buildClassifierPrompt(config);
-  const transcript = buildClassifierTranscript(ctx, {
-    maxUserTokens: config.maxUserTranscriptTokens,
-    maxToolTokens: config.maxToolTranscriptTokens,
-  });
-  const contextText = `<loaded-project-instructions>\n${
-    loadedContext || "(none)"
-  }\n</loaded-project-instructions>\n\n<classifier-transcript>\n${
-    transcript || "(none)"
-  }\n</classifier-transcript>`;
   const contextMessage: UserMessage = {
     role: "user",
     content: [{ type: "text", text: contextText }],

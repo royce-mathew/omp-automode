@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "omp-automode",
+  "owner": {
+    "name": "royce-mathew"
+  },
+  "metadata": {
+    "description": "OMP auto mode guardrails, forked from czottmann/pi-automode."
+  },
+  "plugins": [
+    {
+      "name": "omp-automode",
+      "source": "./",
+      "version": "1.17.0",
+      "description": "Auto mode guardrails with configurable Pi/OMP or TypeSafe Jev classification.",
+      "homepage": "https://github.com/royce-mathew/omp-automode",
+      "repository": "https://github.com/royce-mathew/omp-automode",
+      "license": "MIT",
+      "category": "security"
+    }
+  ]
+}

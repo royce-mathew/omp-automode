@@ -108,6 +108,9 @@ When logging is enabled, pi-automode writes this entry before the matching `deci
 | `message.model` | model ID returned by the classifier provider |
 | `message.usage` | provider-reported input, output, cache, total-token, and cost fields |
 
+For the native Jev backend, a successful typed response creates one detailed-stage attempt and one usage entry. The model ID is the version returned by TypeSafe, even when configuration uses `jev-latest`. Input cost uses TypeSafe's documented $0.042 per million input tokens; output is free. Cache counts are zero because the API reports no cache usage. Errors record a generic failure or HTTP status without the API key or provider error body. Jev's detailed instruction contains the typed questions and its fast instruction is empty.
+
+
 For persisted sessions, `ccusage` reports this sidecar as a separate `-pi-automode` session. This entry contains no prompt or response text. When `classifierIo` is off, pi-automode still writes it.
 
 ### `classifier`

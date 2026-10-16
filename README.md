@@ -1,6 +1,8 @@
-# pi-automode
+# omp-automode
 
-Claude Code-style auto mode for Pi.
+Auto mode guardrails for Oh My Pi (OMP) and Pi, with configurable TypeSafe Jev or Pi/OMP classifier models.
+
+This is [royce-mathew/omp-automode](https://github.com/royce-mathew/omp-automode), a fork of [czottmann/pi-automode](https://github.com/czottmann/pi-automode) by Carlo Zottmann. The upstream MIT license and attribution are retained. The fork's package name is `@royce-mathew/omp-automode`; its commands and existing configuration paths remain compatible with pi-automode.
 
 This is a guardrail extension. It intercepts agent tool calls before execution and blocks actions that match permission deny rules, deterministic hard-deny checks, or the auto-mode classifier's block decision.
 
@@ -14,23 +16,55 @@ Pi-automode supports Pi and Oh My Pi (OMP) 18. It automatically uses OMP's legac
 
 ## Install
 
-From npm:
+### OMP marketplace
 
-```bash
-pi install npm:@czottmann/pi-automode
+After these changes are committed and pushed to the fork:
+
+```text
+/marketplace add royce-mathew/omp-automode
+/marketplace install omp-automode@omp-automode
 ```
 
-From a local checkout:
+The full Git URL also works: `/marketplace add https://github.com/royce-mathew/omp-automode`. The repository includes `.omp-plugin/marketplace.json` and declares the runtime extension through `package.json`'s `omp.extensions`.
 
-```bash
-pi install .
+The Git tree includes the pinned `unbash` parser, so marketplace installs do not need a separate npm install. OMP supplies the Pi-compatible host APIs.
+
+To use this local checkout before pushing:
+
+```text
+/marketplace add ~/omp-autmode
+/marketplace install omp-automode@omp-automode
 ```
 
-For one run from a local checkout:
+Restart OMP after installation so it loads the extension module. Do not enable this fork and upstream pi-automode together: both register the same commands and guardrail hooks. Disable or uninstall the old plugin before enabling the fork.
+
+### Pi or local development
 
 ```bash
-pi -e ./extensions/auto-mode.ts
+pi install https://github.com/royce-mathew/omp-automode
 ```
+
+For a live local development link instead of a marketplace-cached copy:
+
+```bash
+omp plugin link ~/omp-autmode
+```
+
+The upstream npm package `@czottmann/pi-automode` does not contain this fork's Jev integration.
+
+## Choosing the classifier
+
+For Jev, set `TYPESAFE_API_KEY` in the environment before starting OMP or Pi, then run:
+
+```text
+/automode model typesafe/jev-latest
+```
+
+Use a pinned version such as `typesafe/jev-1.14.0` if needed. Jev appears in the interactive `/automode model` picker when the key is present. It uses TypeSafe's native [System One API](https://docs.typesafe.ai/api), not a chat-completions endpoint, and needs no Pi provider registration.
+
+To switch back, run `/automode model provider/model-id` with any configured Pi/OMP model. If `classifierModel` is omitted from configuration, the current session model remains the default. Jev is never selected merely because its key exists.
+
+Jev evaluates typed policy questions in one request; code combines the answers with hard-deny precedence. Missing keys, invalid responses, cancellation, and request timeouts block the action. Existing permission and deterministic checks are unchanged. See [Jev configuration](docs/configuration.md#typesafe-jev).
 
 ## Commands
 
@@ -123,7 +157,7 @@ The list does not govern `bash`. The classifier and deterministic hard-deny chec
 
 The value `allowInsideWorkingDirectory: true` allows file access inside the working directory locally. Pi-automode sends all outside file access to the classifier, including reads.
 
-Classification starts with a conservative one-token filter. If the filter requests review, pi-automode requests one internal `classifier_decision` tool call.
+For Pi/OMP chat models, classification starts with a conservative one-token filter. If the filter requests review, pi-automode requests one internal `classifier_decision` tool call.
 
 The tool exists only in the nested classifier request. It is not registered with `pi.registerTool()`, and the main agent cannot call it.
 
@@ -132,6 +166,9 @@ Pi AI requests schema-constrained sampling with `strict: "prefer"`. Supported pr
 Both stages receive the complete current tool input in a dedicated message. Transcript truncation cannot remove action content. If the exact input cannot fit in the classifier context, auto mode blocks the call.
 
 Both stages use a classifier-specific session key. They request short cache retention from providers that support it. A missing model, provider failure, or invalid response blocks the action.
+
+With `typesafe/jev-*`, a single native Jev request evaluates hard-deny matches, soft-deny matches, allow exceptions, and remaining direct user authorization. Jev receives the same policy, retained evidence, and complete current action. The extension validates its typed answers before deciding; it does not ask Jev for generated text or tool calls.
+
 Pi-automode parses Bash structure with `unbash` before permission and deterministic hard-deny checks. The analysis includes nested commands and literal shell-wrapper scripts. A Bash parse error blocks the action.
 
 ## Examples
@@ -150,6 +187,8 @@ npm run check
 npm test
 npm pack --dry-run
 ```
+
+Bash permission and hard-deny checks use `unbash` 4.0.10, included under `extensions/vendor/unbash` with Lars Kappert's ISC license. To upgrade it, update the exact `devDependencies.unbash` version, run `npm install`, then run `npm run vendor:unbash` and commit the refreshed distribution with its lockfile. Verify a dependency-free installation with `node --import tsx --test --test-name-pattern='marketplace copy' tests/*.test.ts`.
 
 The tests cover these safety-sensitive areas:
 

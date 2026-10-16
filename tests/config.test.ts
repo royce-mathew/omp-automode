@@ -1100,6 +1100,43 @@ test("/automode model saves the selected classifier globally", async () => {
 	assert.equal(saved, "test/classifier");
 });
 
+test("/automode model switches between Jev and registry models and requires a Jev key", async () => {
+	const tmpDir = mkdtempSync(join(os.tmpdir(), "pi-automode-jev-model-"));
+	const path = join(tmpDir, "config.json");
+	const previousKey = process.env.TYPESAFE_API_KEY;
+	try {
+		writeFileSync(path, JSON.stringify({ autoMode: { classifierModel: "test/classifier" } }));
+		const fake = createFakePi();
+		createPiAutomode({
+			prepareGlobalConfig: () => ({ status: "current", activePath: path }),
+			loadConfig: () => baseConfig({
+				classifierModel: JSON.parse(readFileSync(path, "utf8")).autoMode.classifierModel,
+			}),
+		})(fake.pi);
+		const ctx = createFakeCtx(fake.entries);
+		await fake.emit("session_start", { type: "session_start" }, ctx);
+		delete process.env.TYPESAFE_API_KEY;
+		await fake.commands.get("automode")!.handler("model typesafe/jev-latest", ctx);
+		assert.deepEqual({
+			model: JSON.parse(readFileSync(path, "utf8")).autoMode.classifierModel,
+			notification: ctx.notifications.at(-1),
+		}, {
+			model: "test/classifier",
+			notification: { message: "Set TYPESAFE_API_KEY before selecting Jev.", type: "error" },
+		});
+		process.env.TYPESAFE_API_KEY = "test-jev-key";
+		await fake.commands.get("automode")!.handler("model typesafe/jev-1.14.0", ctx);
+		assert.equal(JSON.parse(readFileSync(path, "utf8")).autoMode.classifierModel, "typesafe/jev-1.14.0");
+		delete process.env.TYPESAFE_API_KEY;
+		await fake.commands.get("automode")!.handler("model test/classifier", ctx);
+		assert.equal(JSON.parse(readFileSync(path, "utf8")).autoMode.classifierModel, "test/classifier");
+	} finally {
+		if (previousKey === undefined) delete process.env.TYPESAFE_API_KEY;
+		else process.env.TYPESAFE_API_KEY = previousKey;
+		rmSync(tmpDir, { recursive: true, force: true });
+	}
+});
+
 test("config validation reports unknown keys, wrong types, and missing defaults", () => {
 	const diagnostics = validateSettingsFile({
 		unknown: true,

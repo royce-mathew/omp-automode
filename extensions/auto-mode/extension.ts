@@ -38,7 +38,7 @@ import {
   resolveLogPath,
   type Logger,
 } from "./log.ts";
-import { formatModelSpec, parseModelSpec } from "./model.ts";
+import { formatModelSpec, jevModelId, parseModelSpec } from "./model.ts";
 import { promptForClassifierModel } from "./model-selector.ts";
 import {
   matchesAllowedToolPatterns,
@@ -908,20 +908,29 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
           ctx.ui.notify("Classifier model unchanged", "info");
           return;
         }
-        const parsed = parseModelSpec(selected);
-        const model = parsed
-          ? ctx.modelRegistry.find(parsed.provider, parsed.id)
-          : undefined;
-        if (!model) {
-          ctx.ui.notify(`Model not found: ${selected}`, "error");
-          return;
+        let modelSpec: string;
+        if (jevModelId(selected)) {
+          if (!process.env.TYPESAFE_API_KEY?.trim()) {
+            ctx.ui.notify("Set TYPESAFE_API_KEY before selecting Jev.", "error");
+            return;
+          }
+          modelSpec = selected;
+        } else {
+          const parsed = parseModelSpec(selected);
+          const model = parsed
+            ? ctx.modelRegistry.find(parsed.provider, parsed.id)
+            : undefined;
+          if (!model) {
+            ctx.ui.notify(`Model not found: ${selected}`, "error");
+            return;
+          }
+          const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+          if (!auth.ok) {
+            ctx.ui.notify(auth.error, "error");
+            return;
+          }
+          modelSpec = formatModelSpec(model);
         }
-        const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-        if (!auth.ok) {
-          ctx.ui.notify(auth.error, "error");
-          return;
-        }
-        const modelSpec = formatModelSpec(model);
         try {
           saveClassifierModel(modelSpec);
         } catch (error) {

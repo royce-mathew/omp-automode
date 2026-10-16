@@ -18,8 +18,8 @@ For each Pi `tool_call` event, the extension does this:
 10. Run path-deny checks, including recursive search scopes and symlink aliases.
 11. If an ask rule was accepted, skip all deterministic allow tiers.
 12. Otherwise, apply the inside-working-directory, `permissions.allow`, and read-only tiers in that order.
-13. Send every remaining action through a one-token conservative filter.
-14. If the filter requests review, run structured classifier review.
+13. For a configured `typesafe/jev-*` classifier, evaluate typed policy questions in one native request.
+14. Otherwise, run the one-token conservative filter, followed by structured review when requested.
 15. Persist state and update the UI status and denial history.
 
 The default posture is fail-closed. If model resolution, authentication, a classifier call, or response parsing fails, pi-automode blocks the action.
@@ -50,7 +50,7 @@ flowchart TD
   K -- no --> E{Extension-owned automode_inspect?}
   E -- yes --> E2{Classifier required by ask?}
   E2 -- no --> E1[Allow without state or log changes]
-  E2 -- yes --> N[Run one-token filter]
+  E2 -- yes --> N[Resolve classifier backend]
   E -- no --> K2{Path denied or recursive scope unsafe?}
 
   K2 -- yes --> K1
@@ -64,7 +64,13 @@ flowchart TD
   L -- yes --> L1
   L -- no --> N
 
-  N --> O{Exact safe token?}
+  N --> N0{TypeSafe Jev?}
+  N0 -- yes --> JV[Evaluate typed policy questions]
+  JV --> JV0{Valid answers allow action?}
+  JV0 -- yes --> Q
+  JV0 -- no or error --> R
+  N0 -- no --> N1[Run one-token filter]
+  N1 --> O{Exact safe token?}
   O -- yes --> Q[Allow tool]
   O -- malformed or error --> O1[Block: fail closed]
   O -- review --> P[Request classifier_decision tool call]
@@ -237,7 +243,7 @@ Deterministic safety-control checks still resolve paths canonically before class
 
 The classifier call is made by `defaultClassifyAction`.
 
-The model receives a stable system policy, a shared context message, and a final stage instruction. Both stages use the same shared prefix. Thus, supported providers can reuse it.
+Pi/OMP chat models receive a stable system policy, a shared context message, and a final stage instruction. Both chat stages use the same shared prefix. Thus, supported providers can reuse it. Jev receives the policy in each typed question's instructions and the shared context and full action in `state`.
 
 To inspect each classifier request and raw response, enable `autoMode.log.classifierIo`. See [Observability logging](observability-logging.md).
 
@@ -328,6 +334,13 @@ Pi-automode selects the classifier model in this order:
 2. the current Pi session model.
 
 `/automode model provider/model-id` and the interactive model picker save `autoMode.classifierModel` to `~/.pi/agent/extensions/pi-automode/config.json`. Project-local `.pi/automode.local.json` can still override that global choice.
+
+`typesafe/jev-*` selects the native TypeSafe API and reads `TYPESAFE_API_KEY` from the environment instead of consulting the Pi registry. One request evaluates four yes/no Choice questions. Local code gives hard-deny matches unconditional precedence, then permits soft-denied effects only when ALLOW exceptions or retained direct user authorization cover all of them. Missing or invalid answers block the action.
+
+Jev uses the configured request deadline and `ctx.signal`, but no chat reasoning preference, output-token budget, tool call, session-cache key, or retry stage. Explicit reasoning requests are logged as effective `off`. Its response's versioned model ID, token usage, raw valid response, and tier decision use the existing observability format as one detailed-stage attempt. See [Jev configuration](configuration.md#typesafe-jev).
+
+The remaining model-resolution and staged-parsing details below apply to Pi/OMP chat models.
+
 
 `autoMode.classifierReasoningLevel` can request `low`, `medium`, `high`, `xhigh`, or `max` reasoning for both stages.
 

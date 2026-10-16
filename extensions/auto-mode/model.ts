@@ -11,3 +11,7 @@ export function parseModelSpec(
 export function formatModelSpec(model: Model<any>): string {
   return `${model.provider}/${model.id}`;
 }
+
+export function jevModelId(spec: string | undefined): string | undefined {
+  return spec?.match(/^typesafe\/(jev-[a-zA-Z0-9][a-zA-Z0-9._-]*)$/)?.[1];
+}

@@ -4,8 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## Fork features
+
+- Fork `czottmann/pi-automode` as `royce-mathew/omp-automode`, preserving Carlo Zottmann's attribution and the upstream MIT license.
+- Add optional native TypeSafe Jev classification with `TYPESAFE_API_KEY` and `classifierModel: "typesafe/jev-latest"`. Keep Pi/OMP providers and the session-model default available.
+- Validate typed policy answers and preserve hard-deny precedence, soft-deny exceptions, bounded authorization, full-action evidence, cancellation, and fail-closed request deadlines.
+- Add an OMP marketplace catalog and explicit runtime extension manifest for Git or local marketplace installation.
+
 ## Bug fixes
 
+- **Marketplace dependency delivery** — Include the pinned Bash parser and its ISC license in the Git tree. Validate native Jev answers without TypeBox submodules that OMP does not provide.
 - **System-wide delete checks** — Block recursive deletion of `/Users` and its subdirectories. Check the search root after `find -H`, `-L`, or `-P` before `-delete`.
 - **Codex classifier shutdown** — Codex classifier requests no longer keep session WebSockets. This lets `pi -p` exit after classification. These requests no longer reuse the prompt cache. (#60)
 

@@ -6,7 +6,7 @@ import {
   SelectList,
 } from "@earendil-works/pi-tui";
 import type { SelectItem } from "@earendil-works/pi-tui";
-import { formatModelSpec } from "./model.ts";
+import { formatModelSpec, jevModelId } from "./model.ts";
 
 /** Interactive model selector shown when `/automode model` is run without arguments. */
 export function promptForClassifierModel(
@@ -17,9 +17,6 @@ export function promptForClassifierModel(
     return Promise.resolve(undefined);
   }
   const available = ctx.modelRegistry.getAvailable();
-  if (available.length === 0) {
-    return Promise.resolve(undefined);
-  }
 
   const items: SelectItem[] = available.map((model) => {
     const spec = formatModelSpec(model);
@@ -29,6 +26,19 @@ export function promptForClassifierModel(
       description: spec === current ? "\u2713" : undefined,
     };
   });
+  if (process.env.TYPESAFE_API_KEY?.trim()) {
+    const specs = ["typesafe/jev-latest"];
+    if (current && jevModelId(current) && current !== specs[0]) specs.push(current);
+    for (const spec of specs) {
+      if (items.some((item) => item.value === spec)) continue;
+      items.push({
+        value: spec,
+        label: `${jevModelId(spec)} \u001b[2m[typesafe]\u001b[0m`,
+        description: spec === current ? "\u2713" : undefined,
+      });
+    }
+  }
+  if (items.length === 0) return Promise.resolve(undefined);
   items.sort((a, b) => a.label.localeCompare(b.label));
 
   return ctx.ui.custom<string | undefined>((tui, theme, _keybindings, done) => {
@@ -54,7 +64,7 @@ export function promptForClassifierModel(
         lines.push(
           theme.fg(
             "dim",
-            "Only showing models from configured providers. Use /login to add providers.",
+            "Use /login for Pi providers; set TYPESAFE_API_KEY for Jev.",
           ),
         );
         lines.push("");

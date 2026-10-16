@@ -9,7 +9,7 @@ import {
   type TestExpression,
   type Word,
   type WordPart,
-} from "unbash";
+} from "../vendor/unbash/dist/parser.js";
 
 export type BashAnalysisError = {
   message: string;

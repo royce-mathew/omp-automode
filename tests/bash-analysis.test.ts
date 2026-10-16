@@ -1,9 +1,44 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { cpSync, mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
 	MAX_BASH_SOURCE_LENGTH,
 	analyzeBash,
 } from "../extensions/auto-mode.ts";
+
+test("Bash analysis works from a marketplace copy without installed dependencies", () => {
+	const directory = mkdtempSync(join(os.tmpdir(), "automode-parser-distribution-"));
+	try {
+		cpSync(new URL("../extensions", import.meta.url), join(directory, "extensions"), { recursive: true });
+		const parserUrl = pathToFileURL(join(directory, "extensions/auto-mode/bash.ts")).href;
+		const script = `
+			import { analyzeBash } from ${JSON.stringify(parserUrl)};
+			const analysis = analyzeBash("bash -c 'echo safe && git config --global http.sslVerify false'");
+			console.log(JSON.stringify({
+				commands: analysis.commands.map((command) => command.text),
+				errors: analysis.errors,
+			}));
+		`;
+		const result = spawnSync(process.execPath, [
+			"--import", import.meta.resolve("tsx"), "--input-type=module", "--eval", script,
+		], { cwd: directory, encoding: "utf8", timeout: 10_000 });
+		assert.equal(result.status, 0, result.stderr || result.error?.message);
+		assert.deepEqual(JSON.parse(result.stdout), {
+			commands: [
+				"bash -c 'echo safe && git config --global http.sslVerify false'",
+				"echo safe",
+				"git config --global http.sslVerify false",
+			],
+			errors: [],
+		});
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
 
 test("Bash analysis finds commands across shell control structures", () => {
 	const analysis = analyzeBash(`
