@@ -18,6 +18,81 @@ export type ClassifierTranscriptBudgets = {
   maxToolTokens: number;
 };
 
+/** Session entry holding user answers captured from OMP's built-in ask tool. */
+export const ASK_ANSWER_ENTRY = "pi-automode-ask-answer";
+
+export type AskAnswer = { question: string; answer: string };
+
+type AskAnswerEntry = { toolCallId: string; answers: AskAnswer[] };
+
+type AskQuestionResult = {
+  question: string;
+  selectedOptions: string[];
+  customInput?: string;
+  note?: string;
+  timedOut?: boolean;
+};
+
+function isAskQuestionResult(value: unknown): value is AskQuestionResult {
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    "question" in value && typeof value.question === "string" &&
+    "selectedOptions" in value && Array.isArray(value.selectedOptions) &&
+    value.selectedOptions.every((option) => typeof option === "string") &&
+    (!("customInput" in value) || value.customInput === undefined ||
+      typeof value.customInput === "string") &&
+    (!("note" in value) || value.note === undefined || typeof value.note === "string") &&
+    (!("timedOut" in value) || value.timedOut === undefined ||
+      typeof value.timedOut === "boolean");
+}
+
+function isAskAnswer(value: unknown): value is AskAnswer {
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    "question" in value && typeof value.question === "string" &&
+    "answer" in value && typeof value.answer === "string";
+}
+
+function isAskAnswerEntry(value: unknown): value is AskAnswerEntry {
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    "toolCallId" in value && typeof value.toolCallId === "string" &&
+    value.toolCallId.length > 0 &&
+    "answers" in value && Array.isArray(value.answers) && value.answers.length > 0 &&
+    value.answers.every(isAskAnswer);
+}
+
+function askAnswer(result: unknown): AskAnswer[] {
+  // OMP picks an option itself when an ask times out; that is not user consent.
+  if (!isAskQuestionResult(result) || result.timedOut === true) return [];
+  const parts: string[] = [];
+  if (result.selectedOptions.length > 0) parts.push(result.selectedOptions.join(", "));
+  if (result.customInput?.trim()) parts.push(`custom answer: ${result.customInput.trim()}`);
+  if (result.note?.trim()) parts.push(`note: ${result.note.trim()}`);
+  return parts.length > 0 ? [{ question: result.question, answer: parts.join("; ") }] : [];
+}
+
+/** Extract the answers a user gave in an OMP ask result's structured details. */
+export function askAnswersFromDetails(details: unknown): AskAnswer[] {
+  if (
+    typeof details === "object" && details !== null && !Array.isArray(details) &&
+    "results" in details && Array.isArray(details.results)
+  ) {
+    return details.results.flatMap(askAnswer);
+  }
+  return askAnswer(details);
+}
+
+function capturedAskAnswers(ctx: ExtensionContext): Map<string, AskAnswer[]> {
+  const captured = new Map<string, AskAnswer[]>();
+  for (const entry of ctx.sessionManager.getBranch()) {
+    if (
+      entry.type === "custom" && entry.customType === ASK_ANSWER_ENTRY &&
+      isAskAnswerEntry(entry.data)
+    ) {
+      captured.set(entry.data.toolCallId, entry.data.answers);
+    }
+  }
+  return captured;
+}
+
 function flattenUserContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -93,13 +168,37 @@ function collectTranscriptEntries(ctx: ExtensionContext): TranscriptEntry[] {
   };
   const contextEntries = sessionManager.buildContextEntries?.() ??
     sessionManager.getBranch();
+  const askAnswers = capturedAskAnswers(ctx);
 
   for (const [index, entry] of contextEntries.entries()) {
     if (entry.type !== "message") continue;
-    const message = entry.message as { role?: string; content?: unknown };
+    const message = entry.message as {
+      role?: string;
+      content?: unknown;
+      toolCallId?: unknown;
+      toolName?: unknown;
+      isError?: unknown;
+    };
     if (message.role === "user") {
       const text = flattenUserContent(message.content).trim();
       if (text) entries.push({ index, order: 0, kind: "user", text });
+      continue;
+    }
+    // Tool output stays excluded. A captured ask answer counts only while its
+    // result remains in context, so branches and compaction drop it too.
+    if (message.role === "toolResult") {
+      const answers = message.toolName === "ask" && message.isError !== true &&
+          typeof message.toolCallId === "string"
+        ? askAnswers.get(message.toolCallId) ?? []
+        : [];
+      for (const [order, { question, answer }] of answers.entries()) {
+        entries.push({
+          index,
+          order,
+          kind: "user",
+          text: `Answered ask question "${question}": ${answer}`,
+        });
+      }
       continue;
     }
     if (message.role !== "assistant") continue;
@@ -196,7 +295,7 @@ function selectToolEntries(
   };
 }
 
-/** Build classifier evidence from user text and assistant tool-call payloads only. */
+/** Build classifier evidence from user text, verified ask answers, and assistant tool-call payloads. */
 export function buildClassifierTranscript(
   ctx: ExtensionContext,
   budgets: ClassifierTranscriptBudgets,

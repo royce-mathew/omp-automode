@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
 - Add optional native TypeSafe Jev classification with `TYPESAFE_API_KEY` and `classifierModel: "typesafe/jev-latest"`. Keep Pi/OMP providers and the session-model default available.
 - Validate typed policy answers and preserve hard-deny precedence, soft-deny exceptions, bounded authorization, full-action evidence, cancellation, and fail-closed request deadlines.
 - Add an OMP marketplace catalog and explicit runtime extension manifest for Git or local marketplace installation.
+- Count answers from OMP's built-in `ask` tool as classifier authorization evidence. Record only answers whose tool provenance is `<builtin:ask>`, keep them in transcript order, and exclude timeout auto-selections, chat redirects, errors, nested calls, and answers whose results left the active context.
 
 ## Bug fixes
 

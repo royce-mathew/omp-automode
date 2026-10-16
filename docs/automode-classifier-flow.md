@@ -318,9 +318,10 @@ If a stage request cannot fit in the classifier model's context window, auto mod
 Pi-automode builds the transcript from active Pi context entries. It includes only:
 
 - user text
+- answers from OMP's built-in `ask` tool, captured from the tool's structured result details when its provenance is `<builtin:ask>`
 - assistant tool-call names and payloads
 
-Pi-automode excludes assistant prose, hidden reasoning, and tool results. User evidence and tool-call evidence have separate approximate-token budgets. Both budgets default to 4000.
+Pi-automode excludes assistant prose, hidden reasoning, and all other tool results. Timeout auto-selections and chat redirects from `ask` are not user answers. User evidence, including verified ask answers, and tool-call evidence have separate approximate-token budgets. Both budgets default to 4000.
 
 The selector keeps the first and latest user messages. It fills the remaining budget from the newest eligible entries. It renders retained evidence in chronological order. It also marks omitted or truncated evidence.
 

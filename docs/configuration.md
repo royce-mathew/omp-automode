@@ -105,11 +105,13 @@ Pi-automode does not support the former `maxTranscriptLines` field. Evidence sel
 
 ## Ask-user tools and explicit authorization
 
-Classifier evidence includes normal user messages and assistant tool-call inputs. It excludes assistant prose and all tool results. This exclusion includes answers from ask-user tools such as `@vanillagreen/pi-questions`.
+Classifier evidence includes normal user messages, verified answers from OMP's built-in `ask` tool, and assistant tool-call inputs. It excludes assistant prose and all other tool results, including answers from same-named or extension-provided ask tools such as `@vanillagreen/pi-questions`.
 
-Selecting "Yes" in that tool helps the agent select its next action. Pi-automode does not treat the result as authorization to override a soft deny.
+An OMP `ask` answer counts only when the tool reports itself as `<builtin:ask>` from the `builtin` source. Pi-automode records the question with the selected options, custom answer, and note from the result's structured details. It ignores timeout auto-selections, chat redirects, cancellations, errors, and nested tool calls. The classifier sees the answer as `Answered ask question "<question>": <answer>` at the result's position in the transcript, so a later user message can narrow or revoke it.
 
-Send the authorization as a normal chat message. Then the agent can retry the action. Tool results remain excluded because they can contain untrusted or prompt-injected content.
+The answer must still meet the policy: soft-denied existing-file changes need a question and answer that name the task, one repository or worktree, path scopes, and whether modification, deletion, or both are allowed. Hard denies stay unconditional. The answer stops counting when its result leaves the active context, for example after compaction or on another branch.
+
+Captured answers apply to built-in ask calls made while this version is installed. Earlier sessions do not contain the capture record. Send authorization as a normal chat message when no verified ask answer applies.
 
 ## `$defaults`
 

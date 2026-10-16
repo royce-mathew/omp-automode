@@ -161,4 +161,4 @@ If `classifierModel` uses a cloud provider, the payload leaves the machine. Enab
 
 `autoMode.maxUserTranscriptTokens` and `autoMode.maxToolTranscriptTokens` limit transcript evidence separately. Both fields default to approximately 4000 tokens.
 
-Pi-automode excludes assistant prose and tool results. Provider cache hits can reduce processed or billed input. The log still records the full classifier payload.
+Pi-automode excludes assistant prose and tool results, except verified answers from OMP's built-in `ask` tool. Provider cache hits can reduce processed or billed input. The log still records the full classifier payload.

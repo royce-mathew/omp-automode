@@ -123,7 +123,7 @@ Classifier evidence has separate approximate-token budgets for user messages and
 
 The selector keeps the first and latest user messages as intent anchors. It fills the remaining space from the newest eligible entries.
 
-The selector limits individual entries. It marks omitted or truncated evidence in the classifier transcript. It excludes assistant prose and tool results.
+The selector limits individual entries. It marks omitted or truncated evidence in the classifier transcript. It excludes assistant prose and tool results, except verified answers from OMP's built-in `ask` tool.
 
 These limits use approximate character counts. They do not guarantee the same result as a provider tokenizer.
 

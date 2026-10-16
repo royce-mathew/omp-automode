@@ -161,7 +161,7 @@ If the user must confirm a matching action, use `permissions.ask`:
 
 A confirmation does not create an allow decision. After confirmation, deterministic checks and the classifier still evaluate the call.
 
-If the classifier needs explicit user authorization, send it in a normal chat message. Answers from ask-user tools do not become classifier authorization.
+If the classifier needs explicit user authorization, answer OMP's built-in `ask` question or send it in a normal chat message. Answers from extension-provided ask tools and timeout auto-selections do not become classifier authorization.
 
 ## Deny commands unconditionally
 

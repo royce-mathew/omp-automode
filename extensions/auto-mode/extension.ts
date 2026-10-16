@@ -62,7 +62,11 @@ import {
   statusLine,
   statusText,
 } from "./state.ts";
-import { loadedContextFromSystemPromptOptions } from "./transcript.ts";
+import {
+  ASK_ANSWER_ENTRY,
+  askAnswersFromDetails,
+  loadedContextFromSystemPromptOptions,
+} from "./transcript.ts";
 import type {
   AutoModeState,
   ClassifierReasoningLog,
@@ -434,6 +438,20 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
         event.systemPromptOptions,
       );
       return { systemPrompt: `${event.systemPrompt}\n\n${AUTO_MODE_GUIDANCE}` };
+    });
+
+    pi.on("tool_result", (event) => {
+      if (event.toolName !== "ask" || event.isError || event.parentToolCallId) return undefined;
+      // Only OMP's built-in ask shows the question to the user. A same-named
+      // extension tool could invent an answer, so it never counts as consent.
+      const sourceInfo: { path: string; source?: string } | undefined = pi.getAllTools()
+        .find(({ name }) => name === "ask")?.sourceInfo;
+      if (sourceInfo?.source !== "builtin" || sourceInfo.path !== "<builtin:ask>") return undefined;
+      const answers = askAnswersFromDetails(event.details);
+      if (answers.length > 0) {
+        pi.appendEntry(ASK_ANSWER_ENTRY, { toolCallId: event.toolCallId, answers });
+      }
+      return undefined;
     });
 
     pi.on("tool_call", async (event, ctx) => {
