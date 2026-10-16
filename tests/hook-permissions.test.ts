@@ -860,6 +860,104 @@ test("Bash permission allow routes unquoted pathname expansion to the classifier
 	assert.equal(harness.classifierCalls, 1);
 });
 
+test("Bash executable wildcard permission rules match command text without executing globs", async () => {
+	const allow = parseToolPattern("bash(*)");
+	const deny = parseToolPattern("bash(unsafe-*)");
+	assert.ok(allow);
+	assert.ok(deny);
+	const harness = await setupHookTest({
+		config: baseConfig({ permissionAllow: [allow], permissionDeny: [deny] }),
+		classifier: async () => ({ decision: "block", tier: "none", reason: "unexpected classifier call" }),
+	});
+
+	const allowed = await harness.emit("tool_call", {
+		toolName: "bash",
+		input: { command: "printf safe" },
+	}, harness.ctx);
+	assert.equal(allowed, undefined);
+	const denied = await harness.emit("tool_call", {
+		toolName: "bash",
+		input: { command: "unsafe-command" },
+	}, harness.ctx) as { block?: boolean; reason?: string } | undefined;
+	assert.equal(denied?.block, true);
+	assert.match(denied?.reason ?? "", /permissions\.deny/);
+	assert.equal(harness.classifierCalls, 0);
+});
+
+test("tool_call blocks pathname-expanded executables before broad Bash allows and classifier", async () => {
+	const allow = parseToolPattern("bash");
+	assert.ok(allow);
+	const harness = await setupHookTest({
+		config: baseConfig({ permissionAllow: [allow] }),
+		classifier: async () => ({ decision: "allow", tier: "allow", reason: "must not override deterministic checks" }),
+	});
+
+	for (const prefix of ["", "command -- ", "env -- MODE=test ", "exec -a shell ", "env command exec -- ", "builtin ", "builtin command -- "]) {
+		const command = `${prefix}/bin/ba[s]h -c 'git config --global http.sslVerify false'`;
+		const result = await harness.emit("tool_call", {
+			toolName: "bash",
+			input: { command },
+		}, harness.ctx) as { block?: boolean; reason?: string } | undefined;
+		assert.equal(result?.block, true, command);
+		assert.match(result?.reason ?? "", /executable.*pathname expansion/i, command);
+	}
+	assert.equal(harness.classifierCalls, 0);
+});
+
+test("tool_call blocks decoded NUL words before broad Bash allows and classifier", async () => {
+	const allow = parseToolPattern("bash");
+	assert.ok(allow);
+	const harness = await setupHookTest({
+		config: baseConfig({ permissionAllow: [allow] }),
+		classifier: async () => ({ decision: "allow", tier: "allow", reason: "must not override deterministic checks" }),
+	});
+
+	for (const command of [
+		"$'bash\\0ignored' -c 'git config --global http.sslVerify false'",
+		"command $'bash\\0ignored' -c 'git config --global http.sslVerify false'",
+		"env MODE=test $'bash\\0ignored' -c 'git config --global http.sslVerify false'",
+		"exec $'bash\\0ignored' -c 'git config --global http.sslVerify false'",
+		"builtin command $'bash\\0ignored' -c 'git config --global http.sslVerify false'",
+		"printf '%s' $'safe\\0ignored'",
+		"printf safe > $'output\\0ignored'",
+		"printf '%s' ${VALUE:-$'safe\\0ignored'}",
+	]) {
+		const result = await harness.emit("tool_call", {
+			toolName: "bash",
+			input: { command },
+		}, harness.ctx) as { block?: boolean; reason?: string } | undefined;
+		assert.equal(result?.block, true, command);
+		assert.match(result?.reason ?? "", /NUL/i, command);
+	}
+	assert.equal(harness.classifierCalls, 0);
+});
+
+test("broad Bash allows preserve literal executable globs and non-NUL ANSI-C words", async () => {
+	const allow = parseToolPattern("bash");
+	assert.ok(allow);
+	const harness = await setupHookTest({
+		config: baseConfig({ permissionAllow: [allow] }),
+		classifier: async () => ({ decision: "block", tier: "none", reason: "unexpected classifier call" }),
+	});
+
+	for (const command of [
+		"'/bin/ba[s]h' -c 'echo safe'",
+		'command -- "/bin/ba[s]h" -c \'echo safe\'',
+		"env MODE=test /bin/ba\\[s\\]h -c 'echo safe'",
+		"exec $'/bin/ba[s]h' -c 'echo safe'",
+		"builtin command $'/bin/ba[s]h' -c 'echo safe'",
+		"$'ba\\x73h' -c 'echo safe'",
+		"printf '%s' $'\\\\0'",
+	]) {
+		const result = await harness.emit("tool_call", {
+			toolName: "bash",
+			input: { command },
+		}, harness.ctx);
+		assert.equal(result, undefined, command);
+	}
+	assert.equal(harness.classifierCalls, 0);
+});
+
 test("Bash permission allow preserves quoted and escaped glob literals", async () => {
 	const allow = parseToolPattern("bash(echo *)");
 	assert.ok(allow);

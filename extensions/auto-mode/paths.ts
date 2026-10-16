@@ -271,7 +271,7 @@ export function isSafetyControlPath(path: string, cwd: string): boolean {
 
 export function shellPathTokenToPath(
   token: string,
-  cwd: string,
+  cwd: string | undefined,
   shellText = token,
 ): string | undefined {
   let value = token.trim();
@@ -281,7 +281,11 @@ export function shellPathTokenToPath(
     .replace(/^\$\{HOME\}(?=\/|$)/, HOME);
   if (shellText === "~") value = HOME;
   else if (shellText.startsWith("~/")) value = resolve(HOME, value.slice(2));
-  return isAbsolute(value) ? resolve(value) : resolve(cwd, value);
+  return isAbsolute(value)
+    ? resolve(value)
+    : cwd === undefined
+    ? undefined
+    : resolve(cwd, value);
 }
 
 export function isProfileOrAuthorizedKeysPath(
@@ -290,7 +294,18 @@ export function isProfileOrAuthorizedKeysPath(
   if (PROFILE_FILES.has(path)) {
     return "shell profile modification is hard-denied";
   }
-  if (path === resolve(HOME, ".ssh/authorized_keys")) {
+  const authorizedKeys = resolve(HOME, ".ssh/authorized_keys");
+  if (path === authorizedKeys) {
+    return "SSH authorized_keys modification is hard-denied";
+  }
+  const policyPath = resolvePathForPolicy(path);
+  if (policyPath === undefined) return undefined;
+  for (const profile of PROFILE_FILES) {
+    if (policyPath === resolvePathForPolicy(profile)) {
+      return "shell profile modification is hard-denied";
+    }
+  }
+  if (policyPath === resolvePathForPolicy(authorizedKeys)) {
     return "SSH authorized_keys modification is hard-denied";
   }
   return undefined;

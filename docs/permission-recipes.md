@@ -92,6 +92,8 @@ Do not treat `cd` as a transparent wrapper. The working directory can select rep
 
 Prefer an exact absolute path. A broad rule such as `bash(cd *)` lets covered commands run from any literal directory.
 
+Deterministic path checks consider the original directory and possible `cd` destinations, including conditional branches and nested shells. They can conservatively block an action that is dangerous from any of those directories. Unresolved directory changes, such as `cd -`, dynamic targets, or directory-stack operations, block relative deletion, permission mutation, and redirect targets rather than guessing their paths. Ordinary covered commands such as `cd /etc/nixos && git status` remain usable.
+
 ## Allow command chains and pipelines
 
 Pi-automode requires coverage for each executable command in a supported top-level chain or plain pipeline. Separate single-command patterns can provide that coverage:

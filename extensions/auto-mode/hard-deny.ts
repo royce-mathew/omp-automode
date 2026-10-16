@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import {
   analyzeBash,
+  hasUnquotedPathnameExpansion,
   type BashAnalysis,
   type BashCommandAnalysis,
   type EffectiveCommand,
@@ -228,18 +229,88 @@ export function isRootHomeOrSystemPath(
   );
 }
 
+function possibleBashWorkingDirectories(
+  analysis: BashAnalysis,
+  cwd: string,
+): Set<string> | undefined {
+  const directories = new Set([cwd]);
+  const repeatedScope = analysis.structure.some((token) =>
+    /^node:(While|Until|For|Select|ArithmeticFor|Function)(:|$)/.test(token)
+  );
+  for (const segment of analysis.commands) {
+    const command = segment.effectiveCommand;
+    const name = command.name;
+    if (
+      segment.dynamicName || command.unresolvedTransparentDispatch ||
+      segment.words.some((word) => /^(HOME|CDPATH|PWD|OLDPWD)=/.test(word)) ||
+      name === "pushd" || name === "popd" || name === "." || name === "source" ||
+      (name === "eval" && segment.dynamicShellScript)
+    ) {
+      return undefined;
+    }
+    if (name !== "cd") continue;
+    if (repeatedScope || segment.dynamic) return undefined;
+    let index = 0;
+    while (["-L", "-P", "-e"].includes(command.args[index] ?? "")) index++;
+    if (command.args[index] === "--") index++;
+    const target = command.args[index] ?? HOME;
+    const text = command.argTexts[index] ?? target;
+    if (
+      command.args.length > index + 1 || target === "-" ||
+      target.startsWith("-") || hasUnquotedPathnameExpansion(text)
+    ) {
+      return undefined;
+    }
+    const absolute = shellPathTokenToPath(target, undefined, text);
+    if (absolute) {
+      directories.add(absolute);
+      directories.add(resolvePathForPolicy(absolute) ?? absolute);
+    } else {
+      // CDPATH can redirect bare relative names outside the apparent directory.
+      if (target !== "." && target !== ".." &&
+        !target.startsWith("./") && !target.startsWith("../")) return undefined;
+      const previousDirectories = [...directories];
+      for (const previous of previousDirectories) {
+        const next = shellPathTokenToPath(target, previous, text);
+        if (!next) return undefined;
+        directories.add(next);
+        directories.add(resolvePathForPolicy(next) ?? next);
+        if (directories.size > 64) return undefined;
+      }
+    }
+    if (directories.size > 64) return undefined;
+  }
+  return directories;
+}
+
+function redirectHardDeny(
+  target: string,
+  cwd: string | undefined,
+  policyCwd: string,
+): string | undefined {
+  const path = shellPathTokenToPath(target, cwd);
+  if (!path) {
+    if (cwd === undefined && target !== "-" && !target.startsWith("&")) {
+      return "relative Bash redirect after an unresolved directory change is hard-denied";
+    }
+    return undefined;
+  }
+  const profileReason = isProfileOrAuthorizedKeysPath(path);
+  if (profileReason) return profileReason;
+  if (isSafetyControlPath(path, policyCwd)) {
+    return "auto-mode or permission safety-control modification is hard-denied";
+  }
+  return undefined;
+}
+
 function segmentHardDeny(
   segment: BashCommandAnalysis,
-  cwd: string,
+  cwd: string | undefined,
+  policyCwd: string,
 ): string | undefined {
   for (const target of segment.redirectTargets) {
-    const path = shellPathTokenToPath(target, cwd);
-    if (!path) continue;
-    const profileReason = isProfileOrAuthorizedKeysPath(path);
-    if (profileReason) return profileReason;
-    if (isSafetyControlPath(path, cwd)) {
-      return "auto-mode or permission safety-control modification is hard-denied";
-    }
+    const reason = redirectHardDeny(target, cwd, policyCwd);
+    if (reason) return reason;
   }
 
   for (const word of segment.words) {
@@ -318,6 +389,9 @@ function segmentHardDeny(
           return "irreversible deletion of a user-home expansion is hard-denied";
         }
         const path = shellPathTokenToPath(arg, cwd, shellText);
+        if (!path && cwd === undefined) {
+          return "relative recursive deletion after an unresolved directory change is hard-denied";
+        }
         const policyPath = path ? (resolvePathForPolicy(path) ?? path) : undefined;
         const policyHome = resolvePathForPolicy(HOME) ?? HOME;
         if (policyPath && isRootHomeOrSystemPath(policyPath, policyHome)) {
@@ -331,6 +405,9 @@ function segmentHardDeny(
     let rootIndex = 0;
     while (["-H", "-L", "-P"].includes(args[rootIndex] ?? "")) rootIndex++;
     const root = shellPathTokenToPath(args[rootIndex] ?? "", cwd);
+    if (!root && cwd === undefined) {
+      return "relative find deletion after an unresolved directory change is hard-denied";
+    }
     const policyRoot = root ? (resolvePathForPolicy(root) ?? root) : undefined;
     const policyHome = resolvePathForPolicy(HOME) ?? HOME;
     if (
@@ -345,6 +422,9 @@ function segmentHardDeny(
   if (["chmod", "chown"].includes(name)) {
     for (const arg of args.filter((arg) => !arg.startsWith("-"))) {
       const path = shellPathTokenToPath(arg, cwd);
+      if (!path && cwd === undefined) {
+        return "relative permission mutation after an unresolved directory change is hard-denied";
+      }
       if (
         path &&
         (path.startsWith("/etc/") ||
@@ -415,18 +495,30 @@ export function deterministicHardDeny(
   if (analysis.errors.length > 0) {
     return `Bash input could not be parsed safely: ${analysis.errors[0]?.message ?? "unknown parser error"}`;
   }
+  // Keep every reachable directory: branches, failed cd calls, and subshells
+  // must not discard the original path context.
+  const directories = possibleBashWorkingDirectories(analysis, cwd);
   for (const target of analysis.redirectTargets) {
-    const path = shellPathTokenToPath(target, cwd);
-    if (!path) continue;
-    const profileReason = isProfileOrAuthorizedKeysPath(path);
-    if (profileReason) return profileReason;
-    if (isSafetyControlPath(path, cwd)) {
-      return "auto-mode or permission safety-control modification is hard-denied";
+    if (!directories) {
+      const reason = redirectHardDeny(target, undefined, cwd);
+      if (reason) return reason;
+      continue;
+    }
+    for (const directory of directories) {
+      const reason = redirectHardDeny(target, directory, cwd);
+      if (reason) return reason;
     }
   }
   for (const segment of analysis.commands) {
-    const reason = segmentHardDeny(segment, cwd);
-    if (reason) return reason;
+    if (!directories) {
+      const reason = segmentHardDeny(segment, undefined, cwd);
+      if (reason) return reason;
+      continue;
+    }
+    for (const directory of directories) {
+      const reason = segmentHardDeny(segment, directory, cwd);
+      if (reason) return reason;
+    }
   }
   return undefined;
 }

@@ -115,6 +115,82 @@ test("Bash analysis does not trust unsupported env dispatch options", () => {
 	});
 });
 
+test("Bash analysis rejects unresolved pathname-expanded executables", () => {
+	for (const executable of ["/bin/ba[s]h", "/bin/ba?h", "/bin/ba*h"]) {
+		for (const prefix of ["", "command -- ", "env -- MODE=test ", "exec -a shell ", "env command exec -- ", "builtin ", "builtin command -- "]) {
+			const source = `${prefix}${executable} -c 'git config --global http.sslVerify false'`;
+			const analysis = analyzeBash(source);
+			assert.match(analysis.errors[0]?.message ?? "", /executable.*pathname expansion/i, source);
+			assert.equal(analysis.commands[0]?.effectiveCommand.name, undefined, source);
+			assert.equal(analysis.commands[0]?.effectiveCommand.unresolvedTransparentDispatch, true, source);
+			if (prefix === "") assert.equal(analysis.commands[0]?.dynamicName, true, source);
+		}
+	}
+});
+
+test("Bash analysis preserves literal executable glob characters and argument globs", () => {
+	for (const executable of ["'/bin/ba[s]h'", '"/bin/ba[s]h"', "/bin/ba\\[s\\]h", "$'/bin/ba[s]h'"]) {
+		for (const prefix of ["", "command -- ", "env -- MODE=test ", "exec -- ", "builtin command -- "]) {
+			const source = `${prefix}${executable} -c 'echo safe'`;
+			const analysis = analyzeBash(source);
+			assert.deepEqual(analysis.errors, [], source);
+			assert.equal(analysis.commands[0]?.effectiveCommand.name, "ba[s]h", source);
+			assert.equal(analysis.commands[0]?.effectiveCommand.unresolvedTransparentDispatch, false, source);
+			assert.equal(analysis.commands[0]?.dynamicName, false, source);
+		}
+	}
+	const analysis = analyzeBash("printf '%s\\n' *.ts");
+	assert.deepEqual(analysis.errors, []);
+	assert.equal(analysis.commands[0]?.effectiveCommand.name, "printf");
+});
+
+test("Bash analysis rejects decoded NUL in executable names and all word positions", () => {
+	for (const source of [
+		"$'bash\\0ignored' -c 'git config --global http.sslVerify false'",
+		"command $'bash\\x00ignored' -c 'echo safe'",
+		"env MODE=test $'bash\\u0000ignored' -c 'echo safe'",
+		"exec $'bash\\U00000000ignored' -c 'echo safe'",
+		"builtin command $'bash\\0ignored' -c 'echo safe'",
+		"printf '%s' $'safe\\0ignored'",
+		"printf safe > $'output\\0ignored'",
+		"VALUE=$'safe\\0ignored' printf safe",
+		"printf '%s' ${VALUE:-$'safe\\0ignored'}",
+		"printf '%s' \"$(printf '%s' $'safe\\0ignored')\"",
+		"bash -c \"printf '%s' \\$'safe\\\\0ignored'\"",
+	]) {
+		assert.match(analyzeBash(source).errors[0]?.message ?? "", /NUL/i, source);
+	}
+
+	const safe = analyzeBash("$'ba\\x73h' -c 'echo safe' && printf '%s' $'\\\\0'");
+	assert.deepEqual(safe.errors, []);
+	assert.deepEqual(safe.commands.map((command) => command.name), ["bash", "echo", "printf"]);
+	assert.deepEqual(safe.commands.at(-1)?.args, ["%s", "\\0"]);
+});
+
+test("Bash analysis resolves builtin dispatch but not unsupported builtin options", () => {
+	for (const source of ["builtin cd /", "builtin command cd /", "builtin -- cd /"]) {
+		const analysis = analyzeBash(source);
+		assert.deepEqual(analysis.errors, [], source);
+		assert.deepEqual(analysis.commands[0]?.effectiveCommand, {
+			name: "cd",
+			args: ["/"],
+			argTexts: ["/"],
+			argTildeExpansions: [false],
+			unresolvedTransparentDispatch: false,
+		}, source);
+	}
+	for (const option of ["-p", "--help", "--version", "--unknown"]) {
+		const analysis = analyzeBash(`builtin ${option} cd /`);
+		assert.deepEqual(analysis.commands[0]?.effectiveCommand, {
+			name: undefined,
+			args: [],
+			argTexts: [],
+			argTildeExpansions: [],
+			unresolvedTransparentDispatch: true,
+		}, option);
+	}
+});
+
 test("Bash analysis keeps wrapper-local source ranges for nested commands", () => {
 	const analysis = analyzeBash(
 		`bash -c 'echo "$(tee .pi/automode.local.json)"'`,

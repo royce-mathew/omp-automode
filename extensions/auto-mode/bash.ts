@@ -77,6 +77,93 @@ function parserException(error: unknown): BashAnalysisError {
   };
 }
 
+function containsUnquotedBracketExpression(text: string, start: number): boolean {
+  let index = start + 1;
+  if (text[index] === "!" || text[index] === "^") index += 1;
+  let hasMember = false;
+  if (text[index] === "]") {
+    hasMember = true;
+    index += 1;
+  }
+  let quote: "'" | '"' | "$'" | undefined;
+  for (; index < text.length; index += 1) {
+    const character = text[index];
+    if (quote) {
+      if (quote === "$'") {
+        if (character === "\\") {
+          if (index + 1 < text.length) {
+            hasMember = true;
+            index += 1;
+          }
+        } else if (character === "'") quote = undefined;
+        else hasMember = true;
+      } else {
+        if (character === quote) quote = undefined;
+        else if (quote === '"' && character === "\\") index += 1;
+        else hasMember = true;
+      }
+      continue;
+    }
+    if (character === "\\") {
+      if (index + 1 < text.length) {
+        hasMember = true;
+        index += 1;
+      }
+      continue;
+    }
+    if (character === "$" && text[index + 1] === "'") {
+      quote = "$'";
+      index += 1;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (character === "]") return hasMember;
+    hasMember = true;
+  }
+  return false;
+}
+
+export function hasUnquotedPathnameExpansion(text: string): boolean {
+  let quote: "'" | '"' | "$'" | undefined;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (quote) {
+      if (quote === "$'") {
+        if (character === "\\") index += 1;
+        else if (character === "'") quote = undefined;
+      } else {
+        if (character === quote) quote = undefined;
+        else if (quote === '"' && character === "\\") index += 1;
+      }
+      continue;
+    }
+    if (character === "\\") {
+      index += 1;
+      continue;
+    }
+    if (character === "$" && text[index + 1] === "'") {
+      quote = "$'";
+      index += 1;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (character === "*" || character === "?") return true;
+    if (
+      character === "[" &&
+      containsUnquotedBracketExpression(text, index)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function wordParts(word: Word): WordPart[] {
   return word.parts ?? [];
 }
@@ -125,13 +212,17 @@ type CommandInvocation = {
   name?: string;
   argumentWords: Word[];
   unresolvedTransparentDispatch: boolean;
+  pathnameExpandedExecutable?: Word;
 };
 
 function unwrapTransparentCommandOnce(
   name: string | undefined,
   argumentWords: Word[],
 ): CommandInvocation {
-  if (name !== "command" && name !== "exec" && name !== "env") {
+  if (
+    name !== "command" && name !== "exec" && name !== "env" &&
+    name !== "builtin"
+  ) {
     return { name, argumentWords, unresolvedTransparentDispatch: false };
   }
 
@@ -150,6 +241,10 @@ function unwrapTransparentCommandOnce(
       optionsEnded = true;
       index += 1;
       continue;
+    }
+
+    if (name === "builtin" && !optionsEnded && value.startsWith("-")) {
+      return { argumentWords: [], unresolvedTransparentDispatch: true };
     }
 
     if (name === "command" && !optionsEnded) {
@@ -211,6 +306,14 @@ function unwrapTransparentCommandOnce(
         index += 1;
         continue;
       }
+    }
+
+    if (hasUnquotedPathnameExpansion(word.text)) {
+      return {
+        argumentWords: [],
+        unresolvedTransparentDispatch: true,
+        pathnameExpandedExecutable: word,
+      };
     }
 
     return {
@@ -289,10 +392,11 @@ function exhaustiveNode(_node: never): never {
   throw new Error(`Unsupported unbash AST node: ${JSON.stringify(_node)}`);
 }
 
-/** Parse one Pi `bash` tool input into normalized executable command views. */
+/** Analyze Bash tool input or permission-pattern text without executing it. */
 export function analyzeBash(
   source: string,
   parser: BashParser = parse,
+  sourceKind: "command" | "permission-pattern" = "command",
 ): BashAnalysis {
   const analysis: BashAnalysis = {
     source,
@@ -348,6 +452,12 @@ export function analyzeBash(
       case "Literal":
       case "SingleQuoted":
       case "AnsiCQuoted":
+        if (part.value.includes("\0")) {
+          analysis.errors.push({
+            message: "Decoded NUL in a Bash word part is unsupported",
+          });
+        }
+        return;
       case "SimpleExpansion":
         return;
       case "DoubleQuoted":
@@ -394,6 +504,13 @@ export function analyzeBash(
   }
 
   function visitWord(word: Word, currentSource: string, depth: number): void {
+    if (word.value.includes("\0")) {
+      analysis.errors.push({
+        message: "Decoded NUL in a Bash word is unsupported",
+        pos: word.pos,
+      });
+      return;
+    }
     for (const part of wordParts(word)) {
       visitPart(part, currentSource, depth);
     }
@@ -531,8 +648,28 @@ export function analyzeBash(
         const redirectTargets = redirects
           .map((redirect) => redirect.target)
           .filter((target): target is string => !!target);
-        const normalizedName = commandName(node.name?.value);
-        const invocation = effectiveCommandInvocation(normalizedName, node.suffix);
+        const pathnameExpandedName = node.name &&
+          hasUnquotedPathnameExpansion(node.name.text) ? node.name : undefined;
+        const normalizedName = pathnameExpandedName
+          ? undefined
+          : commandName(node.name?.value);
+        const invocation: CommandInvocation = pathnameExpandedName
+          ? {
+            argumentWords: [],
+            unresolvedTransparentDispatch: true,
+            pathnameExpandedExecutable: pathnameExpandedName,
+          }
+          : effectiveCommandInvocation(normalizedName, node.suffix);
+        if (
+          invocation.pathnameExpandedExecutable &&
+          sourceKind === "command"
+        ) {
+          analysis.errors.push({
+            message:
+              "Executable pathname expansion cannot be resolved for deterministic safety checks",
+            pos: invocation.pathnameExpandedExecutable.pos,
+          });
+        }
         const wrapper = nestedShell(invocation);
         const wrapperSource = wrapper?.source;
         analysis.commands.push({
@@ -553,8 +690,10 @@ export function analyzeBash(
           },
           redirects,
           redirectTargets,
-          dynamic: commandWords.some((word) => !wordIsStatic(word)),
-          dynamicName: !!node.name && !wordIsStatic(node.name),
+          dynamic: !!pathnameExpandedName ||
+            commandWords.some((word) => !wordIsStatic(word)),
+          dynamicName: !!pathnameExpandedName ||
+            (!!node.name && !wordIsStatic(node.name)),
           dynamicShellScript:
             !!wrapper?.hasScriptArgument && wrapperSource === undefined,
           pos: node.pos,

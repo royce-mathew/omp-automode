@@ -171,6 +171,8 @@ With `typesafe/jev-*`, a single native Jev request evaluates hard-deny matches, 
 
 Pi-automode parses Bash structure with `unbash` before permission and deterministic hard-deny checks. The analysis includes nested commands and literal shell-wrapper scripts. A Bash parse error blocks the action.
 
+Deterministic path checks include possible directories reached by `cd` and resolve symlink aliases to shell profiles and SSH authorized keys. If a directory change cannot be resolved safely, relative deletion, permission mutation, and redirect targets fail closed. Unquoted pathname expansion in an executable name and decoded NUL characters in shell words also block the call, even when a Bash allow rule matches.
+
 ## Examples
 
 - `examples/automode.local.json`: copy to `.pi/automode.local.json` in a project and edit the domains, buckets, and source-control org.

@@ -13,6 +13,9 @@ All notable changes to this project are documented in this file.
 
 ## Bug fixes
 
+- **Directory-change path protection** — Check relative Bash targets against possible working directories after `cd`. Fail closed for sensitive relative operations when directory changes cannot be resolved.
+- **Persistence-path symlinks** — Protect shell profiles and SSH authorized keys through direct, chained, and parent-directory symlinks, including symlinked protected files.
+- **Executable expansion checks** — Block pathname-expanded executable names and decoded NUL shell words before permission allows or classifier decisions. Preserve quoted glob literals and wildcard permission patterns.
 - **Marketplace dependency delivery** — Include the pinned Bash parser and its ISC license in the Git tree. Validate native Jev answers without TypeBox submodules that OMP does not provide.
 - **System-wide delete checks** — Block recursive deletion of `/Users` and its subdirectories. Check the search root after `find -H`, `-L`, or `-P` before `-delete`.
 - **Codex classifier shutdown** — Codex classifier requests no longer keep session WebSockets. This lets `pi -p` exit after classification. These requests no longer reuse the prompt cache. (#60)
