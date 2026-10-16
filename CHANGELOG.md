@@ -13,6 +13,7 @@ All notable changes to this project are documented in this file.
 
 ## Bug fixes
 
+- **Development dependency security** — Pin the Pi development packages to 1.0.1, replacing the older shrinkwrapped dependency tree that retained vulnerable `brace-expansion` 5.0.9. The development tree passes `npm audit` without overrides.
 - **Directory-change path protection** — Check relative Bash targets against possible working directories after `cd`. Fail closed for sensitive relative operations when directory changes cannot be resolved.
 - **Persistence-path symlinks** — Protect shell profiles and SSH authorized keys through direct, chained, and parent-directory symlinks, including symlinked protected files.
 - **Executable expansion checks** — Block pathname-expanded executable names and decoded NUL shell words before permission allows or classifier decisions. Preserve quoted glob literals and wildcard permission patterns.
