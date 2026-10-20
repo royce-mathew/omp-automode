@@ -110,7 +110,6 @@ export type EffectiveConfig = {
 };
 
 export type AutoModeState = {
-  enabledOverride?: boolean;
   lastDecision?: "allow" | "block";
   lastReason?: string;
   checkedActions: number;

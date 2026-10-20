@@ -48,12 +48,6 @@ test("statusLine: disabled shows empty circle with frozen counts", () => {
 	assert.equal(statusLine(config, state), "AM ○ a:15 d:3 ca:7 cd:5");
 });
 
-test("statusLine: enabledOverride:false overrides an enabled config", () => {
-	const config = baseConfig({ enabled: true });
-	const state = baseState({ enabledOverride: false, checkedActions: 4, blockedActions: 1 });
-	assert.equal(statusLine(config, state), "AM ○ a:3 d:1");
-});
-
 test("statusLine: allowed is derived from checked minus blocked", () => {
 	const config = baseConfig();
 	const state = baseState({ checkedActions: 10, blockedActions: 3, classifierAllowed: 1, classifierDenied: 1 });

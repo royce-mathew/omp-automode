@@ -56,9 +56,15 @@ import {
 } from "./paths.ts";
 import {
   actionSummary,
+  bindEnabledOverride,
+  type EnabledOverride,
   formatDenials,
+  initialState,
+  type PersistedState,
   pushDenial,
+  releaseEnabledOverride,
   restoreState,
+  STATE_ENTRY,
   statusLine,
   statusText,
 } from "./state.ts";
@@ -223,20 +229,15 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
     let loadResult = loadConfigWithDiagnostics(process.cwd(), false);
     let config: EffectiveConfig = loadResult.config;
     let configDiagnostics: string[] = loadResult.diagnostics;
-    let state: AutoModeState = {
-      checkedActions: 0,
-      blockedActions: 0,
-      classifierAllowed: 0,
-      classifierDenied: 0,
-      recentDenials: [],
-    };
+    let state: AutoModeState = initialState();
+    let enabledOverride: EnabledOverride = {};
     let loadedContext = "";
     let globalConfigNoticeShown = false;
 
     function effectiveConfig(): EffectiveConfig {
       return {
         ...config,
-        enabled: state.enabledOverride ?? config.enabled,
+        enabled: enabledOverride.value ?? config.enabled,
       };
     }
 
@@ -248,7 +249,10 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
     }
 
     function persist(): void {
-      pi.appendEntry("pi-automode-state", state);
+      pi.appendEntry(STATE_ENTRY, {
+        ...state,
+        enabledOverride: enabledOverride.value,
+      } satisfies PersistedState);
     }
 
     function updateUi(ctx: ExtensionContext): void {
@@ -269,28 +273,13 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
     ): unknown {
       const cfg = effectiveConfig();
       if (action === "status") {
-        const status = [
-          `enabled: ${cfg.enabled ? "yes" : "no"}`,
-          `classifier: ${cfg.classifierModel ?? "current session model"}`,
-          `classifier reasoning: ${cfg.classifierReasoningLevel ?? "server default"}`,
-          `checked actions: ${state.checkedActions}`,
-          `blocked actions: ${state.blockedActions}`,
-          `classifier allowed: ${state.classifierAllowed}`,
-          `classifier denied: ${state.classifierDenied}`,
-          `permissions.deny rules: ${cfg.permissionDeny.length}`,
-          `permissions.ask rules: ${cfg.permissionAsk.length}`,
-          `permissions.allow rules: ${cfg.permissionAllow.length}`,
-          `environment entries: ${cfg.environment.length}`,
-          `allow entries: ${cfg.allow.length}`,
-          `soft_deny entries: ${cfg.softDeny.length}`,
-          `hard_deny entries: ${cfg.hardDeny.length}`,
-          `last decision: ${state.lastDecision ?? "none"}`,
-          "last reason: omitted from model-visible inspection",
-        ].join("\n");
         return {
-          status,
+          status: statusText(cfg, {
+            ...state,
+            lastReason: "omitted from model-visible inspection",
+          }),
           state: {
-            enabledOverride: state.enabledOverride,
+            enabledOverride: enabledOverride.value,
             lastDecision: state.lastDecision,
             checkedActions: state.checkedActions,
             blockedActions: state.blockedActions,
@@ -416,7 +405,9 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
       );
       config = loadResult.config;
       configDiagnostics = loadResult.diagnostics;
-      state = restoreState(ctx);
+      const restored = restoreState(ctx);
+      state = restored.state;
+      enabledOverride = bindEnabledOverride(ctx, restored.enabledOverride);
       if (
         ctx.hasUI &&
         globalConfig.notification &&
@@ -429,6 +420,10 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
         globalConfigNoticeShown = true;
       }
       updateUi(ctx);
+    });
+
+    pi.on("session_shutdown", (_event, ctx) => {
+      releaseEnabledOverride(ctx, enabledOverride);
     });
 
     pi.on("before_agent_start", (event) => {
@@ -830,17 +825,17 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
         return;
       }
       if (command === "on") {
-        state.enabledOverride = true;
+        enabledOverride.value = true;
         persist();
         updateUi(ctx);
-        ctx.ui.notify("pi-automode enabled for this session", "info");
+        ctx.ui.notify("pi-automode enabled for this session and its subagents", "info");
         return;
       }
       if (command === "off") {
-        state.enabledOverride = false;
+        enabledOverride.value = false;
         persist();
         updateUi(ctx);
-        ctx.ui.notify("pi-automode disabled for this session", "warning");
+        ctx.ui.notify("pi-automode disabled for this session and its subagents", "warning");
         return;
       }
       if (command === "reload") {
@@ -859,14 +854,7 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
         return;
       }
       if (command === "reset") {
-        state = {
-          checkedActions: 0,
-          blockedActions: 0,
-          classifierAllowed: 0,
-          classifierDenied: 0,
-          recentDenials: [],
-          enabledOverride: state.enabledOverride,
-        };
+        state = initialState();
         persist();
         updateUi(ctx);
         ctx.ui.notify("pi-automode counters reset", "info");

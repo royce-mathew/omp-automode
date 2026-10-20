@@ -80,7 +80,7 @@ export function createFakePi() {
 }
 
 export function createFakeCtx(entries: any[] = [], overrides: Record<string, unknown> = {}) {
-	const { sessionFile, sessionDir, sessionId, ...rest } = overrides;
+	const { sessionFile, sessionDir, sessionId, parentSession, ...rest } = overrides;
 	const notifications: Array<{ message: string; type?: string }> = [];
 	const statuses: Array<{ key: string; text: string | undefined }> = [];
 	const widgets: Array<{ key: string; content: string[] | undefined }> = [];
@@ -110,6 +110,13 @@ export function createFakeCtx(entries: any[] = [], overrides: Record<string, unk
 					? dirname(sessionFile as string)
 					: "/tmp",
 			getSessionId: () => typeof sessionId === "string" ? sessionId : "test-session",
+			getHeader: () => ({
+				type: "session",
+				id: typeof sessionId === "string" ? sessionId : "test-session",
+				timestamp: "2026-01-01T00:00:00.000Z",
+				cwd: "/tmp/project",
+				parentSession: parentSession as string | undefined,
+			}),
 		},
 		ui: {
 			notify(message: string, type?: string) {

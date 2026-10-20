@@ -461,4 +461,4 @@ The classifier flow can be inspected or changed through slash commands:
 
 `/auto-mode` is an alias.
 
-`/automode off` disables the whole flow for the current session. `/automode on` re-enables it. `/automode model` saves the classifier model to `~/.pi/agent/extensions/pi-automode/config.json`.
+`/automode off` disables the whole flow for the current session and its OMP subagents, including subagents that are already running. `/automode on` re-enables it for the same sessions. Subagents follow the main session only when the main session is saved to a session file; under `--no-session` they keep the configured `enabled` value. `/automode model` saves the classifier model to `~/.pi/agent/extensions/pi-automode/config.json`.

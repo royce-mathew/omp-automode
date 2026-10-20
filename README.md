@@ -70,8 +70,8 @@ Jev evaluates typed policy questions in one request; code combines the answers w
 
 ```text
 /automode status    # current state, rules, and classifier
-/automode on        # re-enable for this session
-/automode off       # disable for this session
+/automode on        # re-enable for this session and its subagents
+/automode off       # disable for this session and its subagents
 /automode reload    # reload config from disk
 /automode reset     # reset denial counters only
 /automode defaults  # print the built-in rule lists
