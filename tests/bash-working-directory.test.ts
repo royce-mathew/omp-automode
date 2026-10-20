@@ -15,6 +15,7 @@ for (const command of [
 	"builtin cd / && rm -rf etc",
 	"cd /tmp || cd /; rm -rf etc",
 	"bash -c 'cd / && rm -rf etc'",
+	"for pass in 1 2; do cd /; done; printf marker >> etc/profile",
 ]) {
 	test(`directory changes cannot bypass protected-path checks: ${command}`, async () => {
 		const harness = await setupHookTest({
@@ -39,6 +40,7 @@ test("unresolved shell directory changes fail closed for relative destructive ta
 		"popd && rm -rf relative-target",
 		"cd - && rm -rf relative-target",
 		"while test -n x; do cd ..; done; rm -rf relative-target",
+		'cd "$TARGET" && printf marker >& relative-log',
 	]) {
 		const result = await harness.emit("tool_call", {
 			toolName: "bash", input: { command },
@@ -63,4 +65,25 @@ test("trusted directory changes preserve routine builds and scoped temporary del
 		}, harness.ctx), undefined, command);
 	}
 	assert.equal(harness.classifierCalls, 0);
+});
+
+test("unresolved directory changes allow redirects that open no file for writing", async () => {
+	const harness = await setupHookTest({
+		config: baseConfig({ permissionAllow }),
+		ctx: createFakeCtx([], { cwd: "/tmp/automode-project" }),
+	});
+	for (const command of [
+		'cd "$TARGET" && make 2>&1 | tail -n 5',
+		'cd "$TARGET" && make 2>&- >&2',
+		'cd "$TARGET" && python3 - <<\'PY\'\nprint(1)\nPY',
+		'cd "$TARGET" && grep -c x <<< "$INPUT"',
+		'cd "$TARGET" && wc -l < relative-input.txt',
+		"cd /tmp && for f in a b; do cd /tmp; printf '%s' \"$f\" > relative-out; done",
+	]) {
+		// The mock classifier allows, so a block here can only come from the
+		// deterministic directory checks this test covers.
+		assert.equal(await harness.emit("tool_call", {
+			toolName: "bash", input: { command },
+		}, harness.ctx), undefined, command);
+	}
 });

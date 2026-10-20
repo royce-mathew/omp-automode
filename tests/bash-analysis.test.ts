@@ -215,7 +215,7 @@ test("Bash analysis keeps redirects separate from command words", () => {
 		"printf",
 		"value",
 	]);
-	assert.deepEqual(analysis.commands[0]?.redirectTargets, [
+	assert.deepEqual(analysis.commands[0]?.writeRedirectTargets, [
 		"$HOME/.zshrc",
 	]);
 });

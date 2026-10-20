@@ -92,7 +92,7 @@ Do not treat `cd` as a transparent wrapper. The working directory can select rep
 
 Prefer an exact absolute path. A broad rule such as `bash(cd *)` lets covered commands run from any literal directory.
 
-Deterministic path checks consider the original directory and possible `cd` destinations, including conditional branches and nested shells. They can conservatively block an action that is dangerous from any of those directories. Unresolved directory changes, such as `cd -`, dynamic targets, or directory-stack operations, block relative deletion, permission mutation, and redirect targets rather than guessing their paths. Ordinary covered commands such as `cd /etc/nixos && git status` remain usable.
+Deterministic path checks consider the original directory and possible `cd` destinations, including conditional branches, nested shells, and absolute `cd` targets inside loops. They can conservatively block an action that is dangerous from any of those directories. Unresolved directory changes, such as `cd -`, dynamic targets, bare names that `CDPATH` could redirect, relative `cd` inside a loop, or directory-stack operations, block relative deletion, permission mutation, and redirects that write a relative path rather than guessing their paths. Descriptor duplication such as `2>&1`, here-documents, and input redirects write no file, so they stay usable. Ordinary covered commands such as `cd /etc/nixos && git status` remain usable.
 
 ## Allow command chains and pipelines
 

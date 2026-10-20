@@ -234,6 +234,9 @@ function possibleBashWorkingDirectories(
   cwd: string,
 ): Set<string> | undefined {
   const directories = new Set([cwd]);
+  // A loop or function can run a relative cd any number of times, so those
+  // targets have no finite set. An absolute cd lands in the same directory on
+  // every pass, and this set already ignores ordering.
   const repeatedScope = analysis.structure.some((token) =>
     /^node:(While|Until|For|Select|ArithmeticFor|Function)(:|$)/.test(token)
   );
@@ -249,7 +252,7 @@ function possibleBashWorkingDirectories(
       return undefined;
     }
     if (name !== "cd") continue;
-    if (repeatedScope || segment.dynamic) return undefined;
+    if (segment.dynamic) return undefined;
     let index = 0;
     while (["-L", "-P", "-e"].includes(command.args[index] ?? "")) index++;
     if (command.args[index] === "--") index++;
@@ -266,6 +269,7 @@ function possibleBashWorkingDirectories(
       directories.add(absolute);
       directories.add(resolvePathForPolicy(absolute) ?? absolute);
     } else {
+      if (repeatedScope) return undefined;
       // CDPATH can redirect bare relative names outside the apparent directory.
       if (target !== "." && target !== ".." &&
         !target.startsWith("./") && !target.startsWith("../")) return undefined;
@@ -290,7 +294,7 @@ function redirectHardDeny(
 ): string | undefined {
   const path = shellPathTokenToPath(target, cwd);
   if (!path) {
-    if (cwd === undefined && target !== "-" && !target.startsWith("&")) {
+    if (cwd === undefined) {
       return "relative Bash redirect after an unresolved directory change is hard-denied";
     }
     return undefined;
@@ -308,7 +312,7 @@ function segmentHardDeny(
   cwd: string | undefined,
   policyCwd: string,
 ): string | undefined {
-  for (const target of segment.redirectTargets) {
+  for (const target of segment.writeRedirectTargets) {
     const reason = redirectHardDeny(target, cwd, policyCwd);
     if (reason) return reason;
   }
@@ -498,7 +502,7 @@ export function deterministicHardDeny(
   // Keep every reachable directory: branches, failed cd calls, and subshells
   // must not discard the original path context.
   const directories = possibleBashWorkingDirectories(analysis, cwd);
-  for (const target of analysis.redirectTargets) {
+  for (const target of analysis.writeRedirectTargets) {
     if (!directories) {
       const reason = redirectHardDeny(target, undefined, cwd);
       if (reason) return reason;

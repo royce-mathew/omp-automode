@@ -25,6 +25,35 @@ export type BashRedirectAnalysis = {
   heredoc: boolean;
 };
 
+/**
+ * Returns the path a redirect can open for writing, or undefined when it opens none.
+ *
+ * Hard-deny path checks only guard writes. Input redirects, heredoc delimiters,
+ * here-strings, and fd duplication like `2>&1` never open a path for writing,
+ * and treating `1` or `EOF` as a relative file used to hard-deny ordinary
+ * commands after any unresolved `cd`. `>&word` still writes a file when the
+ * word is not a descriptor number or `-`.
+ */
+function redirectWriteTarget(
+  redirect: BashRedirectAnalysis,
+): string | undefined {
+  const target = redirect.target;
+  if (!target) return undefined;
+  switch (redirect.operator) {
+    case ">":
+    case ">>":
+    case ">|":
+    case "&>":
+    case "&>>":
+    case "<>":
+      return target;
+    case ">&":
+      return target === "-" || /^\d+-?$/.test(target) ? undefined : target;
+    default:
+      return undefined;
+  }
+}
+
 export type EffectiveCommand = {
   name?: string;
   args: string[];
@@ -42,7 +71,8 @@ export type BashCommandAnalysis = {
   argTexts: string[];
   effectiveCommand: EffectiveCommand;
   redirects: BashRedirectAnalysis[];
-  redirectTargets: string[];
+  /** Paths this command's redirects can open for writing; see redirectWriteTarget. */
+  writeRedirectTargets: string[];
   dynamic: boolean;
   dynamicName: boolean;
   dynamicShellScript: boolean;
@@ -54,7 +84,7 @@ export type BashAnalysis = {
   source: string;
   commands: BashCommandAnalysis[];
   redirects: BashRedirectAnalysis[];
-  redirectTargets: string[];
+  writeRedirectTargets: string[];
   structure: string[];
   allowStructureSafe: boolean;
   errors: BashAnalysisError[];
@@ -402,7 +432,7 @@ export function analyzeBash(
     source,
     commands: [],
     redirects: [],
-    redirectTargets: [],
+    writeRedirectTargets: [],
     structure: [],
     allowStructureSafe: true,
     errors: [],
@@ -439,7 +469,8 @@ export function analyzeBash(
     if (redirect.target) visitWord(redirect.target, currentSource, depth);
     if (redirect.body) visitWord(redirect.body, currentSource, depth);
     const target = redirect.target?.value;
-    if (target) analysis.redirectTargets.push(target);
+    const writeTarget = redirectWriteTarget(redirectAnalysis);
+    if (writeTarget) analysis.writeRedirectTargets.push(writeTarget);
     return target;
   }
 
@@ -645,8 +676,8 @@ export function analyzeBash(
           ...commandWords.map((word) => word.value),
         ];
         const redirects = node.redirects.map(analyzeRedirect);
-        const redirectTargets = redirects
-          .map((redirect) => redirect.target)
+        const writeRedirectTargets = redirects
+          .map(redirectWriteTarget)
           .filter((target): target is string => !!target);
         const pathnameExpandedName = node.name &&
           hasUnquotedPathnameExpansion(node.name.text) ? node.name : undefined;
@@ -689,7 +720,7 @@ export function analyzeBash(
               invocation.unresolvedTransparentDispatch,
           },
           redirects,
-          redirectTargets,
+          writeRedirectTargets,
           dynamic: !!pathnameExpandedName ||
             commandWords.some((word) => !wordIsStatic(word)),
           dynamicName: !!pathnameExpandedName ||
