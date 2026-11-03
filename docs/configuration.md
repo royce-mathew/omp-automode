@@ -99,13 +99,13 @@ Example:
 }
 ```
 
-`maxUserTranscriptTokens` and `maxToolTranscriptTokens` are approximate budgets for each category. Both default to 4000 and accept integers of at least 32.
+`maxUserTranscriptTokens` covers human instructions, verified ask answers, and delegated assignments, including retained human evidence from live OMP ancestors. `maxToolTranscriptTokens` covers assistant tool-call payloads. Both are approximate content budgets, excluding JSON metadata and escaping overhead, default to 4000, and accept integers of at least 32. Human intent anchors take priority over delegated text. Content is truncated before JSON serialization; the full serialized request still undergoes classifier context-window checks.
 
 Pi-automode does not support the former `maxTranscriptLines` field. Evidence selection now uses token budgets instead of line counts.
 
 ## Ask-user tools and explicit authorization
 
-Classifier evidence includes normal user messages, verified answers from OMP's built-in `ask` tool, and assistant tool-call inputs. It excludes assistant prose and all other tool results, including answers from same-named or extension-provided ask tools such as `@vanillagreen/pi-questions`.
+Classifier evidence uses newline-delimited JSON records with `kind` and `content` fields: human user messages and verified answers from OMP's built-in `ask` tool use `user`, agent-authored assignments use `delegation`, and assistant tool-call inputs use `tool`. JSON escaping keeps embedded labels, newlines, and record-like text inside content; they cannot create new human records. A final `{"kind":"omitted"}` record marks omitted or truncated evidence. OMP workers also receive retained human evidence from live ancestor sessions in this process. Assignments cannot grant human consent. Evidence excludes assistant prose and all other tool results, including answers from same-named or extension-provided ask tools such as `@vanillagreen/pi-questions`.
 
 An OMP `ask` answer counts only when the tool reports itself as `<builtin:ask>` from the `builtin` source. Pi-automode records the question with the selected options, custom answer, and note from the result's structured details. It ignores timeout auto-selections, chat redirects, cancellations, errors, and nested tool calls. The classifier sees the answer as `Answered ask question "<question>": <answer>` at the result's position in the transcript, so a later user message can narrow or revoke it.
 

@@ -56,18 +56,20 @@ import {
 } from "./paths.ts";
 import {
   actionSummary,
-  bindEnabledOverride,
-  type EnabledOverride,
   formatDenials,
   initialState,
   type PersistedState,
   pushDenial,
-  releaseEnabledOverride,
   restoreState,
   STATE_ENTRY,
   statusLine,
   statusText,
 } from "./state.ts";
+import {
+  type EnabledOverride,
+  registerSession,
+  type SessionRegistration,
+} from "./session-tree.ts";
 import {
   ASK_ANSWER_ENTRY,
   askAnswersFromDetails,
@@ -231,6 +233,7 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
     let configDiagnostics: string[] = loadResult.diagnostics;
     let state: AutoModeState = initialState();
     let enabledOverride: EnabledOverride = {};
+    let sessionRegistration: SessionRegistration | undefined;
     let loadedContext = "";
     let globalConfigNoticeShown = false;
 
@@ -407,7 +410,9 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
       configDiagnostics = loadResult.diagnostics;
       const restored = restoreState(ctx);
       state = restored.state;
-      enabledOverride = bindEnabledOverride(ctx, restored.enabledOverride);
+      sessionRegistration?.unregister();
+      sessionRegistration = registerSession(ctx, restored.enabledOverride);
+      enabledOverride = sessionRegistration.enabledOverride;
       if (
         ctx.hasUI &&
         globalConfig.notification &&
@@ -422,8 +427,9 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
       updateUi(ctx);
     });
 
-    pi.on("session_shutdown", (_event, ctx) => {
-      releaseEnabledOverride(ctx, enabledOverride);
+    pi.on("session_shutdown", () => {
+      sessionRegistration?.unregister();
+      sessionRegistration = undefined;
     });
 
     pi.on("before_agent_start", (event) => {

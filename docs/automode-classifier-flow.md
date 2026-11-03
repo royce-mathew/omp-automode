@@ -315,15 +315,22 @@ Pi-automode checks the fast request before the fast-stage call. A fast result of
 
 If a stage request cannot fit in the classifier model's context window, auto mode blocks the call. It does not truncate the action.
 
-Pi-automode builds the transcript from active Pi context entries. It includes only:
+Pi-automode builds the transcript from active context and branch snapshots supplied by `session-tree.ts`. Extension lifecycle hooks explicitly register and unregister each live session. The tree owns parent linkage and shared toggles; transcript assembly does not receive parent contexts.
 
-- user text
-- answers from OMP's built-in `ask` tool, captured from the tool's structured result details when its provenance is `<builtin:ask>`
-- assistant tool-call names and payloads
+The current session contributes:
 
-Pi-automode excludes assistant prose, hidden reasoning, and all other tool results. Timeout auto-selections and chat redirects from `ask` are not user answers. User evidence, including verified ask answers, and tool-call evidence have separate approximate-token budgets. Both budgets default to 4000.
+- human text as `{"kind":"user","content":"..."}`
+- agent-authored assignments as `{"kind":"delegation","content":"..."}`, which cannot grant human consent
+- answers from OMP's built-in `ask` tool as `user` records, captured from structured result details when its provenance is `<builtin:ask>`
+- assistant tool-call names and payloads as `{"kind":"tool","content":"..."}`
 
-The selector keeps the first and latest user messages. It fills the remaining budget from the newest eligible entries. It renders retained evidence in chronological order. It also marks omitted or truncated evidence.
+The transcript is newline-delimited JSON. Escaping keeps embedded newlines, labels, and JSON-looking text within a record's `content`; they cannot create new human records. This preserves structural provenance, not a deterministic guarantee that the model will judge authorization correctly.
+
+Live OMP ancestors in this process contribute only retained human text and verified ask answers. Forks, switched-away parents, unavailable parents, and parents without session files contribute no inherited evidence. Assistant prose, hidden reasoning, and other tool results are excluded. Timeout auto-selections and chat redirects from `ask` are not user answers.
+
+Each source retains its active branch order, even when timestamps regress. The merge compares only each source's next eligible entry, using a finite message timestamp or a valid session-entry timestamp. An undated next entry precedes a dated one; ties use root-to-leaf source order. Missing times cannot establish actual cross-session recency.
+
+Human evidence and delegated assignments share the user-token budget; tool-call evidence has a separate budget. Both default to 4000 approximate tokens. These budgets count content, excluding JSON metadata and escaping overhead; the full serialized request remains subject to the context-window checks above. The selector prioritizes the latest and first human entries, then the latest and first entries overall, before filling remaining space from the newest eligible entries. Content is truncated before serialization, and a final `{"kind":"omitted"}` record marks any omitted or truncated evidence. These bounds and model judgment do not provide deterministic authorization.
 
 Transcript truncation does not change the dedicated current-action message.
 

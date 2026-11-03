@@ -5,7 +5,13 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Fixed
-- **Subagents follow `/automode on|off`** — OMP subagents now use the main session's `/automode on` or `/automode off` choice, including subagents that are already running. Previously each subagent used the configured `enabled` value, so subagents kept blocking after `/automode off`. Under `--no-session`, subagents still use the configured value
+- **Classifier evidence provenance** — Serialize transcript evidence as JSONL records with explicit provenance and escaped content, so embedded labels or record-like text cannot create human records. Truncate content before serialization and mark omitted evidence without breaking record boundaries.
+- **Subagents follow `/automode on|off`** — OMP subagents now use the main session's `/automode on` or `/automode off` choice, including subagents that are already running. Previously each subagent used the configured `enabled` value, so subagents kept blocking after `/automode off`. Under `--no-session`, subagents still use the configured value.
+- **Worker authorization evidence** — Retain human instructions and verified ask answers from live OMP ancestor sessions without treating agent-authored assignments as human consent. Preserve branch order, merge sources by valid timestamps with deterministic missing-time and tie handling, prioritize human intent within transcript budgets, and exclude forks, switched-away parents, and unavailable parents.
+- **Human evidence budgets** — Reserve space for human intent anchors before delegated assignments and reuse unspent space. Short assignments no longer truncate human revocations when the complete evidence fits the transcript budget.
+- **Classifier false positives** — Read bounded authorization across human messages and evaluate the current security risk rather than code quality or prior denials. Distinguish non-secret local SQLite diagnostics from production mutations and external disclosures without bypassing hard-deny rules.
+- **Session-tree lifecycle** — Give live registration, parent linkage, and shared toggles one owner. Read classifier evidence through snapshots rather than full parent contexts, and ensure an older instance's cleanup cannot detach its replacement.
+
 ## Fork features
 
 - Fork `czottmann/pi-automode` as `royce-mathew/omp-automode`, preserving Carlo Zottmann's attribution and the upstream MIT license.
@@ -23,7 +29,6 @@ All notable changes to this project are documented in this file.
 - **Executable expansion checks** — Block pathname-expanded executable names and decoded NUL shell words before permission allows or classifier decisions. Preserve quoted glob literals and wildcard permission patterns.
 - **Marketplace dependency delivery** — Include the pinned Bash parser and its ISC license in the Git tree. Validate native Jev answers without TypeBox submodules that OMP does not provide.
 - **System-wide delete checks** — Block recursive deletion of `/Users` and its subdirectories. Check the search root after `find -H`, `-L`, or `-P` before `-delete`.
-- **Subagents follow `/automode on|off`** — OMP subagents now use the main session's `/automode on` or `/automode off` choice, including subagents that are already running. Previously each subagent used the configured `enabled` value, so subagents kept blocking after `/automode off`. Under `--no-session`, subagents still use the configured value.
 - **Codex classifier shutdown** — Codex classifier requests no longer keep session WebSockets. This lets `pi -p` exit after classification. These requests no longer reuse the prompt cache. (#60)
 
 ## [1.17.0] - 2026-09-22
