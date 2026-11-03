@@ -116,16 +116,16 @@ Hard-deny rules cannot be overridden by `allow` or by user intent.
 
 ### Classifier transcript budgets
 
-Classifier evidence has separate approximate-token budgets for user messages and assistant tool-call payloads:
+Classifier evidence has separate approximate-token budgets for human/delegated evidence and assistant tool-call payloads:
 
 - `maxUserTranscriptTokens`: 4000
 - `maxToolTranscriptTokens`: 4000
 
-The selector keeps the first and latest user messages as intent anchors. It fills the remaining space from the newest eligible entries.
+The selector prioritizes the latest and first human instructions or verified ask answers, then the latest and first entries overall, including delegated assignments. It fills the remaining space from the newest eligible entries. Retained human evidence from live OMP ancestors shares this budget; delegated text never becomes human authorization.
 
-The selector limits individual entries. It marks omitted or truncated evidence in the classifier transcript. It excludes assistant prose and tool results, except verified answers from OMP's built-in `ask` tool.
+The selector limits individual entries and truncates content before serialization. The transcript uses newline-delimited JSON records with `kind` (`user`, `delegation`, or `tool`) and `content` fields; a final `{"kind":"omitted"}` record marks omitted or truncated evidence. Escaped content cannot create new human records. It excludes assistant prose and tool results, except verified answers from OMP's built-in `ask` tool.
 
-These limits use approximate character counts. They do not guarantee the same result as a provider tokenizer.
+These limits use approximate character counts of content, excluding JSON metadata and escaping overhead. They do not guarantee the same result as a provider tokenizer. The full serialized request remains subject to classifier context-window checks. Structural provenance and bounded evidence do not replace model judgment or provide deterministic authorization.
 
 To change a limit, set an integer of at least 32 in a Pi-owned `autoMode` configuration source. Pi-automode does not support the former `maxTranscriptLines` field.
 

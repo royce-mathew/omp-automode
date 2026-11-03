@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { sessionEvidenceSources, type SessionEvidenceSource } from "./session-tree.ts";
 import { safeJson, truncateMiddle } from "./utils.ts";
 
 const MAX_USER_ENTRY_TOKENS = 1000;
@@ -9,7 +10,8 @@ const CHARS_PER_APPROX_TOKEN = 4;
 type TranscriptEntry = {
   index: number;
   order: number;
-  kind: "user" | "tool";
+  timestamp?: number;
+  kind: "user" | "delegation" | "tool";
   text: string;
 };
 
@@ -80,9 +82,9 @@ export function askAnswersFromDetails(details: unknown): AskAnswer[] {
   return askAnswer(details);
 }
 
-function capturedAskAnswers(ctx: ExtensionContext): Map<string, AskAnswer[]> {
+function capturedAskAnswers(source: SessionEvidenceSource): Map<string, AskAnswer[]> {
   const captured = new Map<string, AskAnswer[]>();
-  for (const entry of ctx.sessionManager.getBranch()) {
+  for (const entry of source.branchEntries) {
     if (
       entry.type === "custom" && entry.customType === ASK_ANSWER_ENTRY &&
       isAskAnswerEntry(entry.data)
@@ -161,27 +163,46 @@ function truncateToTokenCap(
   };
 }
 
-function collectTranscriptEntries(ctx: ExtensionContext): TranscriptEntry[] {
-  const entries: TranscriptEntry[] = [];
-  const sessionManager = ctx.sessionManager as typeof ctx.sessionManager & {
-    buildContextEntries?: () => ReturnType<typeof ctx.sessionManager.getBranch>;
-  };
-  const contextEntries = sessionManager.buildContextEntries?.() ??
-    sessionManager.getBranch();
-  const askAnswers = capturedAskAnswers(ctx);
+function finiteTimestamp(value: unknown): number | undefined {
+  const timestamp = typeof value === "number"
+    ? value
+    : typeof value === "string"
+    ? Date.parse(value)
+    : undefined;
+  return timestamp !== undefined && Number.isFinite(timestamp)
+    ? timestamp
+    : undefined;
+}
 
-  for (const [index, entry] of contextEntries.entries()) {
+function collectTranscriptEntries(
+  source: SessionEvidenceSource,
+): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+  const askAnswers = capturedAskAnswers(source);
+
+  for (const [index, entry] of source.contextEntries.entries()) {
     if (entry.type !== "message") continue;
     const message = entry.message as {
       role?: string;
+      attribution?: unknown;
       content?: unknown;
       toolCallId?: unknown;
       toolName?: unknown;
       isError?: unknown;
+      timestamp?: unknown;
     };
+    const timestamp = finiteTimestamp(message.timestamp) ??
+      finiteTimestamp(entry.timestamp);
     if (message.role === "user") {
+      const kind = message.attribution === "agent"
+        ? "delegation"
+        : message.attribution === undefined || message.attribution === "user"
+        ? "user"
+        : undefined;
       const text = flattenUserContent(message.content).trim();
-      if (text) entries.push({ index, order: 0, kind: "user", text });
+      if (text && kind && (!source.inherited || kind === "user")) {
+        entries.push({ index, order: 0, timestamp, kind, text });
+      }
       continue;
     }
     // Tool output stays excluded. A captured ask answer counts only while its
@@ -195,13 +216,14 @@ function collectTranscriptEntries(ctx: ExtensionContext): TranscriptEntry[] {
         entries.push({
           index,
           order,
+          timestamp,
           kind: "user",
           text: `Answered ask question "${question}": ${answer}`,
         });
       }
       continue;
     }
-    if (message.role !== "assistant") continue;
+    if (source.inherited || message.role !== "assistant") continue;
 
     for (const [order, toolCall] of collectAssistantToolCalls(
       message.content,
@@ -209,6 +231,7 @@ function collectTranscriptEntries(ctx: ExtensionContext): TranscriptEntry[] {
       entries.push({
         index,
         order,
+        timestamp,
         kind: "tool",
         text: `${toolCall.name}: ${safeJson(toolCall.input, 8000)}`,
       });
@@ -222,44 +245,67 @@ function selectUserEntries(
   entries: TranscriptEntry[],
   maxTokens: number,
 ): { selected: TranscriptEntry[]; omitted: boolean } {
-  const users = entries.filter((entry) => entry.kind === "user");
+  const users = entries.filter((entry) => entry.kind !== "tool");
   if (users.length === 0) return { selected: [], omitted: false };
 
-  const distinctAnchors = users.length > 1;
-  const anchorBudget = distinctAnchors
-    ? Math.max(1, Math.floor(maxTokens / 2))
-    : maxTokens;
-  const entryCap = Math.min(MAX_USER_ENTRY_TOKENS, anchorBudget);
-  const rendered = users.map((entry) => {
-    const truncated = truncateToTokenCap(`User: ${entry.text}`, entryCap);
-    return { ...entry, text: truncated.text, truncated: truncated.truncated };
-  });
-  const selectedIndices = new Set<number>();
+  const humans = users.flatMap((entry, index) =>
+    entry.kind === "user" ? [index] : []
+  );
+  const anchors = new Set([
+    humans.at(-1),
+    humans[0],
+    users.length - 1,
+    0,
+  ].filter((index): index is number => index !== undefined));
+  const priorityAnchors = humans.length > 0
+    ? new Set([humans.at(-1)!, humans[0]!])
+    : anchors;
+  const anchorShare = Math.min(
+    MAX_USER_ENTRY_TOKENS,
+    Math.floor(maxTokens / priorityAnchors.size),
+  );
+  const reservations = new Map(
+    [...priorityAnchors].map((index) => [
+      index,
+      Math.min(anchorShare, approximateTokenCount(users[index]!.text)),
+    ]),
+  );
+  let reservedTokens = [...reservations.values()].reduce(
+    (sum, tokens) => sum + tokens,
+    0,
+  );
+  const selectedEntries = new Map<number, TranscriptEntry>();
   let usedTokens = 0;
+  let truncated = false;
 
-  const include = (index: number): void => {
-    if (selectedIndices.has(index)) return;
-    const entry = rendered[index];
+  const include = (index: number, reserved = 0): void => {
+    if (selectedEntries.has(index)) return;
+    const entry = users[index];
     if (!entry) return;
-    const tokens = approximateTokenCount(entry.text);
-    if (usedTokens + tokens > maxTokens) return;
-    selectedIndices.add(index);
-    usedTokens += tokens;
+    const available = maxTokens - usedTokens - reserved;
+    if (available <= 0) return;
+    const result = truncateToTokenCap(
+      entry.text,
+      Math.min(MAX_USER_ENTRY_TOKENS, available),
+    );
+    selectedEntries.set(index, { ...entry, text: result.text });
+    usedTokens += approximateTokenCount(result.text);
+    truncated ||= result.truncated;
   };
 
-  // Prefer the latest user instruction when an extremely small configured
-  // budget cannot retain both intent anchors.
-  include(rendered.length - 1);
-  include(0);
-  for (let index = rendered.length - 2; index > 0; index -= 1) {
+  // Keep human approvals and revocations ahead of delegated task text when
+  // a small budget cannot retain every intent anchor.
+  for (const index of anchors) {
+    reservedTokens -= reservations.get(index) ?? 0;
+    include(index, reservedTokens);
+  }
+  for (let index = users.length - 2; index > 0; index -= 1) {
     include(index);
   }
 
   return {
-    selected: rendered.filter((_entry, index) => selectedIndices.has(index)),
-    omitted: selectedIndices.size < users.length || rendered.some((entry) =>
-      entry.truncated
-    ),
+    selected: [...selectedEntries.values()],
+    omitted: selectedEntries.size < users.length || truncated,
   };
 }
 
@@ -276,7 +322,7 @@ function selectToolEntries(
     const entry = tools[index];
     if (!entry) continue;
     const truncated = truncateToTokenCap(
-      `ToolCall ${entry.text}`,
+      entry.text,
       Math.min(MAX_TOOL_ENTRY_TOKENS, maxTokens),
     );
     const tokens = approximateTokenCount(truncated.text);
@@ -289,32 +335,60 @@ function selectToolEntries(
   return {
     selected,
     omitted: selected.length < tools.length || tools.some((entry) =>
-      approximateTokenCount(`ToolCall ${entry.text}`) >
+      approximateTokenCount(entry.text) >
         Math.min(MAX_TOOL_ENTRY_TOKENS, maxTokens)
     ),
   };
 }
 
-/** Build classifier evidence from user text, verified ask answers, and assistant tool-call payloads. */
+function mergeTranscriptSources(sources: TranscriptEntry[][]): TranscriptEntry[] {
+  const positions = sources.map(() => 0);
+  const merged: TranscriptEntry[] = [];
+  while (true) {
+    let nextSource = -1;
+    let nextEntry: TranscriptEntry | undefined;
+    for (const [sourceIndex, entries] of sources.entries()) {
+      const entry = entries[positions[sourceIndex]!];
+      if (!entry) continue;
+      // Undated heads use root-to-leaf source order, before dated heads.
+      if (entry.timestamp === undefined) {
+        nextSource = sourceIndex;
+        nextEntry = entry;
+        break;
+      }
+      if (!nextEntry || entry.timestamp < nextEntry.timestamp!) {
+        nextSource = sourceIndex;
+        nextEntry = entry;
+      }
+    }
+    if (!nextEntry) return merged;
+    positions[nextSource]! += 1;
+    nextEntry.index = merged.length;
+    merged.push(nextEntry);
+  }
+}
+
+/** Retain human intent from live parents without promoting delegated tasks to consent. */
 export function buildClassifierTranscript(
   ctx: ExtensionContext,
   budgets: ClassifierTranscriptBudgets,
 ): string {
-  const entries = collectTranscriptEntries(ctx);
+  // Only source heads compete by time; branch order wins over clock regressions.
+  const entries = mergeTranscriptSources(
+    sessionEvidenceSources(ctx).map((source) => collectTranscriptEntries(source)),
+  );
   const users = selectUserEntries(entries, budgets.maxUserTokens);
   const tools = selectToolEntries(entries, budgets.maxToolTokens);
   const selected = [...users.selected, ...tools.selected].sort(
     (left, right) => left.index - right.index || left.order - right.order,
   );
+  const records = selected.map((entry) =>
+    JSON.stringify({ kind: entry.kind, content: entry.text })
+  );
   if (users.omitted || tools.omitted) {
-    selected.push({
-      index: Number.MAX_SAFE_INTEGER,
-      order: 0,
-      kind: "tool",
-      text: "<transcript_entries_omitted />",
-    });
+    records.push(JSON.stringify({ kind: "omitted" }));
   }
-  return selected.map((entry) => entry.text).join("\n");
+  return records.join("\n");
 }
 
 export function loadedContextFromSystemPromptOptions(options: unknown): string {

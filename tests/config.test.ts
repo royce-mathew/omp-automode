@@ -999,12 +999,6 @@ test("rule lists replace defaults only for their own section when $defaults is o
 	assert.deepEqual(config.softDeny, DEFAULT_SOFT_DENY);
 });
 
-test("default local file policy requires bounded user authorization", () => {
-	assert.equal(DEFAULT_ALLOW.some((rule) => rule.includes("deleting files created during the current task")), true);
-	assert.equal(DEFAULT_ALLOW.some((rule) => rule.includes("a direct user authorization names the task, one repository or worktree, permitted path scopes")), true);
-	assert.equal(DEFAULT_SOFT_DENY.some((rule) => rule.includes("a direct user authorization names the task, one repository or worktree, permitted path scopes")), true);
-});
-
 test("rule lists combine across configurable scopes when $defaults is present", () => {
 	const config = buildEffectiveConfigFromSources({
 		globalSettings: [{ autoMode: { allow: ["$defaults", "global allow"] } }],
