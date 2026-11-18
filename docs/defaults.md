@@ -117,19 +117,16 @@ Hard-deny rules cannot be overridden by `allow` or by user intent.
 
 ### Classifier transcript budgets
 
-Classifier evidence has separate approximate-token budgets and message-count limits for user messages, assistant tool-call payloads, and tool-result excerpts:
+Classifier evidence has separate approximate-token budgets for human/delegated evidence and assistant tool-call payloads:
 
-- `maxUserTranscriptTokens`: 4000, `maxUserTranscriptMessages`: 30
-- `maxToolTranscriptTokens`: 4000, `maxToolTranscriptCalls`: 40
-- `maxToolResultTranscriptTokens`: 2000, `maxToolResultTranscriptEntries`: 10
-- `includeToolResults`: `true`
-- `maxParentUserTranscriptTokens`: 2000, `maxParentUserTranscriptMessages`: 6, `includeParentUserMessages`: `true` (a subagent's view of the main session's user messages)
+- `maxUserTranscriptTokens`: 4000
+- `maxToolTranscriptTokens`: 4000
 
-The selector pins the first user message (the brief), the newest verified `ask` answers, and the latest message. It fills the remaining space from the newest eligible entries.
+The selector prioritizes the latest and first human instructions or verified ask answers, then the latest and first entries overall, including delegated assignments. It fills the remaining space from the newest eligible entries. Retained human evidence from live OMP ancestors shares this budget; delegated text never becomes human authorization.
 
-The selector limits individual entries: 1000 approximate tokens for a message or tool call (2000 for the brief, 500 for an ask answer) and 400 for a tool result. It marks omitted or truncated evidence in the classifier transcript. It excludes assistant prose and the results of `read`, `grep`, `find`, and `ls`. Other tool results appear as untrusted excerpts, and messages from a coordinator or peer agent appear under the sender's name.
+The selector limits individual entries and truncates content before serialization. The transcript uses newline-delimited JSON records with `kind` (`user`, `delegation`, or `tool`) and `content` fields; a final `{"kind":"omitted"}` record marks omitted or truncated evidence. Escaped content cannot create new human records. It excludes assistant prose and tool results, except verified answers from OMP's built-in `ask` tool.
 
-These limits use approximate character counts. They do not guarantee the same result as a provider tokenizer.
+These limits use approximate character counts of content, excluding JSON metadata and escaping overhead. They do not guarantee the same result as a provider tokenizer. The full serialized request remains subject to classifier context-window checks. Structural provenance and bounded evidence do not replace model judgment or provide deterministic authorization.
 
 To change a token budget, set an integer of at least 32 in a Pi-owned `autoMode` configuration source. Count limits accept integers of at least 1. Pi-automode does not support the former `maxTranscriptLines` field.
 

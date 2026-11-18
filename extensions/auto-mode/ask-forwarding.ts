@@ -62,7 +62,7 @@ function parentOf(ctx: ExtensionContext): string | undefined {
 }
 
 /** Make a starting session findable by its subagents. */
-export function registerSession(ctx: ExtensionContext): SessionRecord {
+export function registerAskSession(ctx: ExtensionContext): SessionRecord {
   const record: SessionRecord = {
     agentId: agentIdOf(ctx),
     hasUI: ctx.hasUI,
@@ -76,7 +76,7 @@ export function registerSession(ctx: ExtensionContext): SessionRecord {
 }
 
 /** Unregister a shutting-down session so its subagents stop asking it. */
-export function releaseSession(ctx: ExtensionContext, record: SessionRecord): void {
+export function releaseAskSession(ctx: ExtensionContext, record: SessionRecord): void {
   for (const key of sessionKeys(ctx)) {
     // Only drop our own record; another session may have claimed this key since.
     if (sessionsByKey.get(key) === record) {

@@ -1,77 +1,23 @@
-import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import {
-  AGENT_ATTRIBUTION,
-  agentMessageFromCustomEntry,
-  agentMessageFromUserText,
-  agentMessageFromWaitDetails,
-  agentMessageLabel,
-  backgroundJobResult,
-  parentAgentId,
-} from "./agent-messages.ts";
-import {
-  CHARS_PER_APPROX_TOKEN,
-  DEFAULT_INCLUDE_PARENT_USER_MESSAGES,
-  DEFAULT_INCLUDE_TOOL_RESULTS,
-  DEFAULT_MAX_PARENT_USER_TRANSCRIPT_MESSAGES,
-  DEFAULT_MAX_PARENT_USER_TRANSCRIPT_TOKENS,
-  DEFAULT_MAX_TOOL_RESULT_TRANSCRIPT_ENTRIES,
-  DEFAULT_MAX_TOOL_RESULT_TRANSCRIPT_TOKENS,
-  DEFAULT_MAX_TOOL_TRANSCRIPT_CALLS,
-  DEFAULT_MAX_USER_TRANSCRIPT_MESSAGES,
-  READ_ONLY_TOOLS,
-} from "./constants.ts";
-import {
-  exitCodeFromDetails,
-  renderToolResult,
-  summarizeToolCall,
-  type ToolResultInput,
-} from "./tool-results.ts";
-import { findRootSessionEntries } from "./parent-session.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { sessionEvidenceSources, type SessionEvidenceSource } from "./session-tree.ts";
 import { safeJson, truncateMiddle } from "./utils.ts";
 
 const MAX_USER_ENTRY_TOKENS = 1000;
-// The first user message is the brief: it defines the task and its bounds.
-const MAX_BRIEF_ENTRY_TOKENS = 2000;
-const MAX_ASK_ANSWER_ENTRY_TOKENS = 500;
-const MAX_PINNED_ASK_ANSWERS = 8;
 const MAX_TOOL_ENTRY_TOKENS = 1000;
-const MAX_TOOL_RESULT_ENTRY_TOKENS = 400;
-const USER_SPEAKER = "User";
-const PARENT_USER_SPEAKER = "User (main session)";
-const PARENT_USER_OPEN_TAG = "<parent-session-user-messages>";
-const PARENT_USER_CLOSE_TAG = "</parent-session-user-messages>";
-const OMITTED_ENTRIES_MARKER = "<transcript_entries_omitted />";
-const BACKGROUND_JOB_TOOL = "background-job";
-const UNKNOWN_TOOL = "unknown";
+const MAX_RECENT_TOOL_ENTRIES = 40;
+const CHARS_PER_APPROX_TOKEN = 4;
 
 type TranscriptEntry = {
   index: number;
   order: number;
-  kind: "user" | "tool" | "result";
+  timestamp?: number;
+  kind: "user" | "delegation" | "tool";
   text: string;
-  /** User-kind entries: the label before the colon, e.g. `User` or `Coordinator Main`. */
-  speaker?: string;
-  /** Kept whatever the message and token budgets say. */
-  pinned?: boolean;
-  /** The entry is a verified answer to an `ask` question. */
-  ask?: boolean;
-  /** Result-kind entries: rendered once the remaining budget is known. */
-  result?: ToolResultInput;
 };
 
 export type ClassifierTranscriptBudgets = {
   maxUserTokens: number;
   maxToolTokens: number;
-  /** Newest user, coordinator, and peer messages to keep. Pinned entries and the latest message always stay. */
-  maxUserMessages?: number;
-  maxToolCalls?: number;
-  includeToolResults?: boolean;
-  maxToolResultTokens?: number;
-  maxToolResults?: number;
-  /** Under an OMP subagent, add the root session's user messages as their own block. */
-  includeParentUserMessages?: boolean;
-  maxParentUserMessages?: number;
-  maxParentUserTokens?: number;
 };
 
 /** Session entry holding user answers captured from OMP's built-in ask tool. */
@@ -136,9 +82,9 @@ export function askAnswersFromDetails(details: unknown): AskAnswer[] {
   return askAnswer(details);
 }
 
-function capturedAskAnswers(entries: SessionEntry[]): Map<string, AskAnswer[]> {
+function capturedAskAnswers(source: SessionEvidenceSource): Map<string, AskAnswer[]> {
   const captured = new Map<string, AskAnswer[]>();
-  for (const entry of entries) {
+  for (const entry of source.branchEntries) {
     if (
       entry.type === "custom" && entry.customType === ASK_ANSWER_ENTRY &&
       isAskAnswerEntry(entry.data)
@@ -163,7 +109,6 @@ function flattenUserContent(content: unknown): string {
 }
 
 function collectAssistantToolCalls(content: unknown): Array<{
-  id: string | undefined;
   name: string;
   input: unknown;
 }> {
@@ -174,7 +119,6 @@ function collectAssistantToolCalls(content: unknown): Array<{
         block,
       ): block is {
         type: string;
-        id?: unknown;
         name?: string;
         arguments?: unknown;
         input?: unknown;
@@ -182,7 +126,6 @@ function collectAssistantToolCalls(content: unknown): Array<{
     )
     .filter((block) => block.type === "toolCall" || block.type === "tool_use")
     .map((block) => ({
-      id: typeof block.id === "string" ? block.id : undefined,
       name: String(block.name ?? "tool"),
       input: "arguments" in block ? block.arguments : block.input,
     }));
@@ -220,250 +163,166 @@ function truncateToTokenCap(
   };
 }
 
-/** The entries of one session that evidence is collected from. */
-type EntrySource = {
-  /** What the model sees: compaction-aware where the host provides it. */
-  contextEntries: SessionEntry[];
-  /** The whole active branch, which also holds the captured ask answers. */
-  branchEntries: SessionEntry[];
-};
-
-type CollectOptions = {
-  includeToolResults: boolean;
-  /** Keep only what a person typed: human-attributed user messages and verified ask answers. */
-  humanOnly?: boolean;
-};
-
-function sessionEntrySource(sessionManager: ExtensionContext["sessionManager"]): EntrySource {
-  const manager = sessionManager as typeof sessionManager & {
-    buildContextEntries?: () => SessionEntry[];
-  };
-  const branchEntries = manager.getBranch();
-  return { contextEntries: manager.buildContextEntries?.() ?? branchEntries, branchEntries };
+function finiteTimestamp(value: unknown): number | undefined {
+  const timestamp = typeof value === "number"
+    ? value
+    : typeof value === "string"
+    ? Date.parse(value)
+    : undefined;
+  return timestamp !== undefined && Number.isFinite(timestamp)
+    ? timestamp
+    : undefined;
 }
 
 function collectTranscriptEntries(
-  source: EntrySource,
-  parentId: string | undefined,
-  { includeToolResults, humanOnly = false }: CollectOptions,
+  source: SessionEvidenceSource,
 ): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
-  const askAnswers = capturedAskAnswers(source.branchEntries);
-  const callInputs = new Map<string, unknown>();
-  let briefSeen = false;
+  const askAnswers = capturedAskAnswers(source);
 
   for (const [index, entry] of source.contextEntries.entries()) {
-    if (entry.type === "custom_message") {
-      if (humanOnly) continue;
-      const forwarded = agentMessageFromCustomEntry(entry, parentId);
-      const job = forwarded || !includeToolResults ? undefined : backgroundJobResult(entry);
-      if (forwarded?.body) {
-        entries.push({
-          index,
-          order: 0,
-          kind: "user",
-          speaker: agentMessageLabel(forwarded),
-          text: forwarded.body,
-        });
-      } else if (job) {
-        entries.push({
-          index,
-          order: 0,
-          kind: "result",
-          text: "",
-          result: { toolName: BACKGROUND_JOB_TOOL, ...job },
-        });
-      }
-      continue;
-    }
     if (entry.type !== "message") continue;
     const message = entry.message as {
       role?: string;
-      content?: unknown;
       attribution?: unknown;
+      content?: unknown;
       toolCallId?: unknown;
       toolName?: unknown;
       isError?: unknown;
-      details?: unknown;
+      timestamp?: unknown;
     };
+    const timestamp = finiteTimestamp(message.timestamp) ??
+      finiteTimestamp(entry.timestamp);
     if (message.role === "user") {
+      const kind = message.attribution === "agent"
+        ? "delegation"
+        : message.attribution === undefined || message.attribution === "user"
+        ? "user"
+        : undefined;
       const text = flattenUserContent(message.content).trim();
-      if (!text) continue;
-      if (humanOnly && message.attribution === AGENT_ATTRIBUTION) continue;
-      const forwarded = agentMessageFromUserText(text, message.attribution);
-      if (forwarded) {
-        if (forwarded.body) {
-          entries.push({
-            index,
-            order: 0,
-            kind: "user",
-            speaker: agentMessageLabel(forwarded),
-            text: forwarded.body,
-          });
-        }
-        continue;
+      if (text && kind && (!source.inherited || kind === "user")) {
+        entries.push({ index, order: 0, timestamp, kind, text });
       }
-      entries.push({
-        index,
-        order: 0,
-        kind: "user",
-        speaker: USER_SPEAKER,
-        text,
-        pinned: !briefSeen,
-      });
-      briefSeen = true;
       continue;
     }
+    // Tool output stays excluded. A captured ask answer counts only while its
+    // result remains in context, so branches and compaction drop it too.
     if (message.role === "toolResult") {
-      const toolName = typeof message.toolName === "string" ? message.toolName : UNKNOWN_TOOL;
-      const toolCallId = typeof message.toolCallId === "string" ? message.toolCallId : undefined;
-      // A captured ask answer counts only while its result remains in context,
-      // so branches and compaction drop it too.
-      const answers = toolName === "ask" && message.isError !== true &&
-          toolCallId !== undefined
-        ? askAnswers.get(toolCallId) ?? []
+      const answers = message.toolName === "ask" && message.isError !== true &&
+          typeof message.toolCallId === "string"
+        ? askAnswers.get(message.toolCallId) ?? []
         : [];
-      if (answers.length > 0) {
-        for (const [order, { question, answer }] of answers.entries()) {
-          entries.push({
-            index,
-            order,
-            kind: "user",
-            speaker: USER_SPEAKER,
-            text: `Answered ask question "${question}": ${answer}`,
-            pinned: true,
-            ask: true,
-          });
-        }
-        continue;
-      }
-      if (humanOnly) continue;
-      const forwarded = toolName === "wait"
-        ? agentMessageFromWaitDetails(message.details, parentId)
-        : undefined;
-      if (forwarded) {
-        if (forwarded.body) {
-          entries.push({
-            index,
-            order: 0,
-            kind: "user",
-            speaker: agentMessageLabel(forwarded),
-            text: forwarded.body,
-          });
-        }
-        continue;
-      }
-      if (includeToolResults && !READ_ONLY_TOOLS.has(toolName)) {
+      for (const [order, { question, answer }] of answers.entries()) {
         entries.push({
           index,
-          order: 0,
-          kind: "result",
-          text: "",
-          result: {
-            toolName,
-            call: toolCallId !== undefined && callInputs.has(toolCallId)
-              ? summarizeToolCall(callInputs.get(toolCallId))
-              : "",
-            isError: message.isError === true,
-            exitCode: exitCodeFromDetails(message.details),
-            content: message.content,
-          },
+          order,
+          timestamp,
+          kind: "user",
+          text: `Answered ask question "${question}": ${answer}`,
         });
       }
       continue;
     }
-    if (message.role !== "assistant" || humanOnly) continue;
+    if (source.inherited || message.role !== "assistant") continue;
 
     for (const [order, toolCall] of collectAssistantToolCalls(
       message.content,
     ).entries()) {
-      if (toolCall.id !== undefined) callInputs.set(toolCall.id, toolCall.input);
       entries.push({
         index,
         order,
+        timestamp,
         kind: "tool",
         text: `${toolCall.name}: ${safeJson(toolCall.input, 8000)}`,
       });
     }
   }
 
-  // Only the newest answers stay pinned; older ones compete as ordinary messages.
-  const askEntries = entries.filter((entry) => entry.ask);
-  for (const entry of askEntries.slice(0, -MAX_PINNED_ASK_ANSWERS)) {
-    entry.pinned = false;
-  }
   return entries;
 }
 
 function selectUserEntries(
   entries: TranscriptEntry[],
   maxTokens: number,
-  maxMessages: number,
 ): { selected: TranscriptEntry[]; omitted: boolean } {
-  const users = entries.filter((entry) => entry.kind === "user");
+  const users = entries.filter((entry) => entry.kind !== "tool");
   if (users.length === 0) return { selected: [], omitted: false };
 
-  const distinctAnchors = users.length > 1;
-  const anchorBudget = distinctAnchors
-    ? Math.max(1, Math.floor(maxTokens / 2))
-    : maxTokens;
-  const rendered = users.map((entry) => {
-    const entryCap = entry.ask
-      ? MAX_ASK_ANSWER_ENTRY_TOKENS
-      : entry.pinned
-      ? MAX_BRIEF_ENTRY_TOKENS
-      : MAX_USER_ENTRY_TOKENS;
-    const truncated = truncateToTokenCap(
-      `${entry.speaker ?? USER_SPEAKER}: ${entry.text}`,
-      Math.min(entryCap, anchorBudget),
-    );
-    return { ...entry, text: truncated.text, truncated: truncated.truncated };
-  });
-  const selectedIndices = new Set<number>();
+  const humans = users.flatMap((entry, index) =>
+    entry.kind === "user" ? [index] : []
+  );
+  const anchors = new Set([
+    humans.at(-1),
+    humans[0],
+    users.length - 1,
+    0,
+  ].filter((index): index is number => index !== undefined));
+  const priorityAnchors = humans.length > 0
+    ? new Set([humans.at(-1)!, humans[0]!])
+    : anchors;
+  const anchorShare = Math.min(
+    MAX_USER_ENTRY_TOKENS,
+    Math.floor(maxTokens / priorityAnchors.size),
+  );
+  const reservations = new Map(
+    [...priorityAnchors].map((index) => [
+      index,
+      Math.min(anchorShare, approximateTokenCount(users[index]!.text)),
+    ]),
+  );
+  let reservedTokens = [...reservations.values()].reduce(
+    (sum, tokens) => sum + tokens,
+    0,
+  );
+  const selectedEntries = new Map<number, TranscriptEntry>();
   let usedTokens = 0;
+  let truncated = false;
 
-  // The brief, ask answers, and the latest message stay whatever the budgets
-  // say; each is capped at half the token budget, so tiny budgets cannot let
-  // one entry crowd out the rest.
-  const latest = rendered.length - 1;
-  for (const [position, entry] of rendered.entries()) {
-    if (entry.pinned || position === latest) {
-      selectedIndices.add(position);
-      usedTokens += approximateTokenCount(entry.text);
-    }
+  const include = (index: number, reserved = 0): void => {
+    if (selectedEntries.has(index)) return;
+    const entry = users[index];
+    if (!entry) return;
+    const available = maxTokens - usedTokens - reserved;
+    if (available <= 0) return;
+    const result = truncateToTokenCap(
+      entry.text,
+      Math.min(MAX_USER_ENTRY_TOKENS, available),
+    );
+    selectedEntries.set(index, { ...entry, text: result.text });
+    usedTokens += approximateTokenCount(result.text);
+    truncated ||= result.truncated;
+  };
+
+  // Keep human approvals and revocations ahead of delegated task text when
+  // a small budget cannot retain every intent anchor.
+  for (const index of anchors) {
+    reservedTokens -= reservations.get(index) ?? 0;
+    include(index, reservedTokens);
   }
-  for (let position = latest - 1; position >= 0; position -= 1) {
-    if (selectedIndices.size >= maxMessages) break;
-    if (selectedIndices.has(position)) continue;
-    const tokens = approximateTokenCount(rendered[position].text);
-    if (usedTokens + tokens > maxTokens) continue;
-    selectedIndices.add(position);
-    usedTokens += tokens;
+  for (let index = users.length - 2; index > 0; index -= 1) {
+    include(index);
   }
 
   return {
-    selected: rendered.filter((_entry, position) => selectedIndices.has(position)),
-    omitted: selectedIndices.size < users.length || rendered.some((entry) =>
-      entry.truncated
-    ),
+    selected: [...selectedEntries.values()],
+    omitted: selectedEntries.size < users.length || truncated,
   };
 }
 
 function selectToolEntries(
   entries: TranscriptEntry[],
   maxTokens: number,
-  maxCalls: number,
 ): { selected: TranscriptEntry[]; omitted: boolean } {
   const tools = entries.filter((entry) => entry.kind === "tool");
   const selected: TranscriptEntry[] = [];
   let usedTokens = 0;
 
   for (let index = tools.length - 1; index >= 0; index -= 1) {
-    if (selected.length >= maxCalls) break;
+    if (selected.length >= MAX_RECENT_TOOL_ENTRIES) break;
     const entry = tools[index];
     if (!entry) continue;
     const truncated = truncateToTokenCap(
-      `ToolCall ${entry.text}`,
+      entry.text,
       Math.min(MAX_TOOL_ENTRY_TOKENS, maxTokens),
     );
     const tokens = approximateTokenCount(truncated.text);
@@ -476,119 +335,60 @@ function selectToolEntries(
   return {
     selected,
     omitted: selected.length < tools.length || tools.some((entry) =>
-      approximateTokenCount(`ToolCall ${entry.text}`) >
+      approximateTokenCount(entry.text) >
         Math.min(MAX_TOOL_ENTRY_TOKENS, maxTokens)
     ),
   };
 }
 
-function selectResultEntries(
-  entries: TranscriptEntry[],
-  maxTokens: number,
-  maxResults: number,
-): { selected: TranscriptEntry[]; omitted: boolean } {
-  const results = entries.filter((entry) => entry.kind === "result");
-  const selected: TranscriptEntry[] = [];
-  let usedTokens = 0;
-  let truncated = false;
-
-  for (let index = results.length - 1; index >= 0; index -= 1) {
-    if (selected.length >= maxResults) break;
-    const entry = results[index];
-    if (!entry?.result) continue;
-    const rendered = renderToolResult(
-      entry.result,
-      Math.min(MAX_TOOL_RESULT_ENTRY_TOKENS, maxTokens - usedTokens),
-    );
-    // Older results would see an even smaller remainder.
-    if (!rendered) break;
-    selected.push({ ...entry, text: rendered.text });
-    usedTokens += approximateTokenCount(rendered.text);
-    truncated ||= rendered.truncated;
+function mergeTranscriptSources(sources: TranscriptEntry[][]): TranscriptEntry[] {
+  const positions = sources.map(() => 0);
+  const merged: TranscriptEntry[] = [];
+  while (true) {
+    let nextSource = -1;
+    let nextEntry: TranscriptEntry | undefined;
+    for (const [sourceIndex, entries] of sources.entries()) {
+      const entry = entries[positions[sourceIndex]!];
+      if (!entry) continue;
+      // Undated heads use root-to-leaf source order, before dated heads.
+      if (entry.timestamp === undefined) {
+        nextSource = sourceIndex;
+        nextEntry = entry;
+        break;
+      }
+      if (!nextEntry || entry.timestamp < nextEntry.timestamp!) {
+        nextSource = sourceIndex;
+        nextEntry = entry;
+      }
+    }
+    if (!nextEntry) return merged;
+    positions[nextSource]! += 1;
+    nextEntry.index = merged.length;
+    merged.push(nextEntry);
   }
-
-  selected.reverse();
-  return { selected, omitted: selected.length < results.length || truncated };
 }
 
-/**
- * The root session's user messages as their own block, above the agent's own
- * evidence. Only an OMP subagent has a root session above it, and only what
- * the user typed or answered there counts: injected messages, coordinator
- * traffic, tool calls, and tool results of the root stay out.
- */
-function parentUserBlock(
-  ctx: ExtensionContext,
-  budgets: ClassifierTranscriptBudgets,
-): string | undefined {
-  if (!(budgets.includeParentUserMessages ?? DEFAULT_INCLUDE_PARENT_USER_MESSAGES)) {
-    return undefined;
-  }
-  const rootEntries = findRootSessionEntries(ctx);
-  if (!rootEntries) return undefined;
-  const entries = collectTranscriptEntries(
-    { contextEntries: rootEntries, branchEntries: rootEntries },
-    undefined,
-    { includeToolResults: false, humanOnly: true },
-  ).map((entry) => ({ ...entry, speaker: PARENT_USER_SPEAKER }));
-  const users = selectUserEntries(
-    entries,
-    budgets.maxParentUserTokens ?? DEFAULT_MAX_PARENT_USER_TRANSCRIPT_TOKENS,
-    budgets.maxParentUserMessages ?? DEFAULT_MAX_PARENT_USER_TRANSCRIPT_MESSAGES,
-  );
-  if (users.selected.length === 0) return undefined;
-  return [
-    PARENT_USER_OPEN_TAG,
-    ...users.selected.map((entry) => entry.text),
-    ...(users.omitted ? [OMITTED_ENTRIES_MARKER] : []),
-    PARENT_USER_CLOSE_TAG,
-  ].join("\n");
-}
-
-/**
- * Build classifier evidence from user, coordinator, and peer messages, verified
- * ask answers, assistant tool-call payloads, and bounded untrusted excerpts of
- * recent tool results. Under an OMP subagent it opens with the root session's
- * user messages.
- */
+/** Retain human intent from live parents without promoting delegated tasks to consent. */
 export function buildClassifierTranscript(
   ctx: ExtensionContext,
   budgets: ClassifierTranscriptBudgets,
 ): string {
-  const entries = collectTranscriptEntries(
-    sessionEntrySource(ctx.sessionManager),
-    parentAgentId(ctx),
-    { includeToolResults: budgets.includeToolResults ?? DEFAULT_INCLUDE_TOOL_RESULTS },
+  // Only source heads compete by time; branch order wins over clock regressions.
+  const entries = mergeTranscriptSources(
+    sessionEvidenceSources(ctx).map((source) => collectTranscriptEntries(source)),
   );
-  const users = selectUserEntries(
-    entries,
-    budgets.maxUserTokens,
-    budgets.maxUserMessages ?? DEFAULT_MAX_USER_TRANSCRIPT_MESSAGES,
-  );
-  const tools = selectToolEntries(
-    entries,
-    budgets.maxToolTokens,
-    budgets.maxToolCalls ?? DEFAULT_MAX_TOOL_TRANSCRIPT_CALLS,
-  );
-  const results = selectResultEntries(
-    entries,
-    budgets.maxToolResultTokens ?? DEFAULT_MAX_TOOL_RESULT_TRANSCRIPT_TOKENS,
-    budgets.maxToolResults ?? DEFAULT_MAX_TOOL_RESULT_TRANSCRIPT_ENTRIES,
-  );
-  const selected = [...users.selected, ...tools.selected, ...results.selected].sort(
+  const users = selectUserEntries(entries, budgets.maxUserTokens);
+  const tools = selectToolEntries(entries, budgets.maxToolTokens);
+  const selected = [...users.selected, ...tools.selected].sort(
     (left, right) => left.index - right.index || left.order - right.order,
   );
-  if (users.omitted || tools.omitted || results.omitted) {
-    selected.push({
-      index: Number.MAX_SAFE_INTEGER,
-      order: 0,
-      kind: "tool",
-      text: OMITTED_ENTRIES_MARKER,
-    });
+  const records = selected.map((entry) =>
+    JSON.stringify({ kind: entry.kind, content: entry.text })
+  );
+  if (users.omitted || tools.omitted) {
+    records.push(JSON.stringify({ kind: "omitted" }));
   }
-  const lines = selected.map((entry) => entry.text);
-  const parent = parentUserBlock(ctx, budgets);
-  return (parent === undefined ? lines : [parent, ...lines]).join("\n");
+  return records.join("\n");
 }
 
 export function loadedContextFromSystemPromptOptions(options: unknown): string {

@@ -9,7 +9,7 @@ import { baseConfig, createFakeCtx, createFakePi } from "./test-helpers.ts";
 
 const QUESTION =
 	"May I modify existing files under src/** in /work/parser for the parser task, without deleting files?";
-const APPROVAL = `User: Answered ask question "${QUESTION}": Approve scoped edits`;
+const APPROVAL = `Answered ask question "${QUESTION}": Approve scoped edits`;
 const BUILTIN_ASK = { path: "<builtin:ask>", source: "builtin" };
 
 type AskSource = { path: string; source: string };
@@ -88,11 +88,11 @@ async function recordAskAnswer(
 	return fake.entries;
 }
 
-function transcript(entries: SessionEntry[]): string {
+function transcript(entries: SessionEntry[]): Array<{ kind: string; content: string }> {
 	return buildClassifierTranscript(createFakeCtx(entries) as never, {
 		maxUserTokens: 4000,
 		maxToolTokens: 4000,
-	});
+	}).split("\n").map((line) => JSON.parse(line));
 }
 
 test("answers from OMP's built-in ask tool reach classifier evidence as user authorization", async () => {
@@ -104,9 +104,11 @@ test("answers from OMP's built-in ask tool reach classifier evidence as user aut
 		{ type: "message", message: { role: "user", content: "Actually, do not edit anything yet." } },
 	]);
 
-	const approval = `${APPROVAL}; note: Keep the public API unchanged.`;
-	assert.ok(evidence.includes(approval), evidence);
-	assert.ok(evidence.indexOf(approval) < evidence.indexOf("User: Actually, do not edit anything yet."));
+	assert.deepEqual(evidence.filter((entry) => entry.kind === "user"), [
+		{ kind: "user", content: "Inspect the parser and ask before editing." },
+		{ kind: "user", content: `${APPROVAL}; note: Keep the public API unchanged.` },
+		{ kind: "user", content: "Actually, do not edit anything yet." },
+	]);
 });
 
 test("multi-question ask answers keep user answers and exclude timeout auto-selections", async () => {
@@ -133,9 +135,10 @@ test("multi-question ask answers keep user answers and exclude timeout auto-sele
 	});
 	const evidence = transcript([...askTurn("ask-1"), askResult("ask-1"), ...recorded]);
 
-	assert.deepEqual(evidence.split("\n").filter((line) => line.startsWith("User: Answered ask question")), [
-		APPROVAL,
-		'User: Answered ask question "Which parser files may I modify?": custom answer: Only src/parser.ts and src/lexer.ts',
+	assert.deepEqual(evidence.filter((entry) => entry.kind === "user"), [
+		{ kind: "user", content: "Inspect the parser and ask before editing." },
+		{ kind: "user", content: APPROVAL },
+		{ kind: "user", content: 'Answered ask question "Which parser files may I modify?": custom answer: Only src/parser.ts and src/lexer.ts' },
 	]);
 });
 
@@ -187,11 +190,16 @@ test("ask answers do not count without a verified built-in user response", async
 	];
 
 	const positive = transcript([...askTurn("ask-1"), askResult("ask-1"), ...await recordAskAnswer(singleAnswer())]);
-	assert.ok(positive.includes(APPROVAL), positive);
+	assert.deepEqual(positive.filter((entry) => entry.kind === "user"), [
+		{ kind: "user", content: "Inspect the parser and ask before editing." },
+		{ kind: "user", content: APPROVAL },
+	]);
 	for (const scenario of cases) {
 		await t.test(scenario.name, async () => {
 			const evidence = transcript(await scenario.entries());
-			assert.equal(evidence.includes("Answered ask question"), false, evidence);
+			assert.deepEqual(evidence.filter((entry) => entry.kind === "user"), [
+				{ kind: "user", content: "Inspect the parser and ask before editing." },
+			]);
 		});
 	}
 });
@@ -227,5 +235,11 @@ test("Jev receives verified ask authorization in its classifier context", async 
 	);
 
 	assert.equal(result.tier, "explicit_intent");
-	assert.equal(typeof context === "string" && context.includes(APPROVAL), true, String(context));
+	assert.equal(typeof context, "string");
+	const evidence = String(context).match(/<classifier-transcript>\n([\s\S]*?)\n<\/classifier-transcript>/);
+	assert.ok(evidence, String(context));
+	assert.deepEqual(evidence[1].split("\n").map((line) => JSON.parse(line)).filter((entry) => entry.kind === "user"), [
+		{ kind: "user", content: "Inspect the parser and ask before editing." },
+		{ kind: "user", content: APPROVAL },
+	]);
 });

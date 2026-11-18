@@ -30,8 +30,8 @@ import {
   forwardedAskMessage,
   forwardedAskTitle,
   headlessAskNote,
-  registerSession,
-  releaseSession,
+  registerAskSession,
+  releaseAskSession,
   type SessionRecord,
 } from "./ask-forwarding.ts";
 import { classifierCooldowns } from "./classifier-fallback.ts";
@@ -97,10 +97,6 @@ import {
 import { analyzeReadOnlyBash, readOnlyBashPolicy } from "./read-only-bash.ts";
 import { isInsideReadOnlyRoot, isPlainFilePath } from "./read-only-roots.ts";
 import {
-  registerParentContextSource,
-  releaseParentContextSource,
-} from "./parent-session.ts";
-import {
   describeActiveControls,
   extractInputPath,
   isInside,
@@ -122,15 +118,12 @@ import {
 import {
   actionSummary,
   agentIdentity,
-  bindEnabledOverride,
   enabledSource,
-  type EnabledOverride,
   formatDenials,
   initialState,
   type PersistedState,
   pushClassifierError,
   pushDenial,
-  releaseEnabledOverride,
   restoreState,
   STATE_ENTRY,
   statusIcon,
@@ -140,6 +133,11 @@ import {
 } from "./state.ts";
 import { deniedGrepResultFiles, narrowGrepSearch } from "./search-scope.ts";
 import { gateUrlSchemePath } from "./url-schemes.ts";
+import {
+  type EnabledOverride,
+  registerSession,
+  type SessionRegistration,
+} from "./session-tree.ts";
 import {
   ASK_ANSWER_ENTRY,
   askAnswersFromDetails,
@@ -392,6 +390,7 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
     let configDiagnostics: string[] = loadResult.diagnostics;
     let state: AutoModeState = initialState();
     let enabledOverride: EnabledOverride = {};
+    let sessionRegistration: SessionRegistration | undefined;
     let loadedContext = "";
     /** Classifier calls awaiting a model response; parallel tool calls can overlap. */
     let classifierCallsInFlight = 0;
@@ -415,11 +414,12 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
       const restored = restoreState(ctx);
       state = restored.state;
       pendingCreations.clear();
-      enabledOverride = bindEnabledOverride(ctx, restored.enabledOverride);
+      sessionRegistration?.unregister();
+      sessionRegistration = registerSession(ctx, restored.enabledOverride);
+      enabledOverride = sessionRegistration.enabledOverride;
       // Register on both start paths: a `/tan` clone's subagents also look
-      // their ancestors up in this registry.
-      sessionRecord = registerSession(ctx);
-      registerParentContextSource(ctx);
+      // their ancestors up in these registries.
+      sessionRecord = registerAskSession(ctx);
       // The Agent Hub entry is made here too, so a `/tan` clone shows up as
       // `Tan-<id>-automode` although it never gets `session_start`.
       hubEntry?.dispose();
@@ -687,15 +687,15 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
     pi.on("session_shutdown", (_event, ctx) => {
       hubEntry?.dispose();
       hubEntry = undefined;
-      releaseEnabledOverride(ctx, enabledOverride);
+      sessionRegistration?.unregister();
+      sessionRegistration = undefined;
       sessionInit = undefined;
       if (sessionRecord) {
-        releaseSession(ctx, sessionRecord);
+        releaseAskSession(ctx, sessionRecord);
       }
       for (const pending of pendingAsks) {
         pending.abort();
       }
-      releaseParentContextSource(ctx);
     });
 
     pi.on("before_agent_start", (event, ctx) => {
@@ -1318,8 +1318,6 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
     }
 
     pi.on("tool_call", async (event, ctx) => {
-      // Refresh this session's entry for its subagents' parent-context lookups.
-      registerParentContextSource(ctx);
       narrowedSearchInputs.delete(event.toolCallId);
       const result = await evaluateToolCall(event, ctx);
       if (result !== undefined) return result;

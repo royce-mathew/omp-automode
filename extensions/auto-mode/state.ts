@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { CLASSIFIER_ERROR_HISTORY_LIMIT, DENIAL_HISTORY_LIMIT } from "./constants.ts";
 import { restoreCreatedPaths } from "./provenance.ts";
+import type { EnabledOverride } from "./session-tree.ts";
 import type {
   AgentIdentity,
   AutoModeState,
@@ -14,76 +15,6 @@ import { safeJson, truncateMiddle } from "./utils.ts";
 /** Session entry holding counters, recent denials, created paths, and the `/automode on|off` choice. */
 export const STATE_ENTRY = "pi-automode-state";
 
-/**
- * The `/automode on|off` choice for a main session and every subagent it
- * spawns. `value` stays undefined until the user picks one, so the configured
- * `enabled` applies.
- */
-export type EnabledOverride = {
-  value?: boolean;
-  /** Session that created this object. Any other session holding it inherited the choice. */
-  owner?: string;
-};
-
-// OMP runs the extension factory again for each subagent, so closure state is
-// per session and a subagent would otherwise keep blocking after the user ran
-// `/automode off` in the main session. Module globals are shared by every
-// session in the process. Each session is registered under its session file
-// and its session id, because a task subagent's header names its parent by
-// file while a `/tan` clone's header names it by id.
-const enabledOverrideBySessionKey = new Map<string, EnabledOverride>();
-
-/** The keys under which a session can be named as a parent: its file and its id. */
-function sessionKeys(ctx: ExtensionContext): string[] {
-  const keys = [
-    ctx.sessionManager.getSessionFile?.(),
-    ctx.sessionManager.getSessionId?.(),
-  ];
-  return keys.filter((key): key is string => typeof key === "string" && key !== "");
-}
-
-/**
- * Bind a starting session to its agent tree's override. An OMP subagent shares
- * its parent's live object, so toggling in the main session reaches subagents
- * that are already running. Main sessions, forks, and subagents whose parent
- * is not in this process start from their own persisted choice.
- *
- * In-memory (`--no-session`) parents have no session file to link by, so their
- * subagents inherit only when the header names the parent's session id.
- * Otherwise they keep the configured `enabled`, which fails closed.
- */
-export function bindEnabledOverride(
-  ctx: ExtensionContext,
-  persisted: boolean | undefined,
-): EnabledOverride {
-  // Pi has no subagents and no `agent` field. Forks and `/new` sessions also
-  // name a parent session, so only OMP's subagent marker may inherit.
-  const agent = "agent" in ctx ? ctx.agent : undefined;
-  const isSubagent = typeof agent === "object" && agent !== null &&
-    "kind" in agent && agent.kind === "sub";
-  const parent = isSubagent
-    ? ctx.sessionManager.getHeader?.()?.parentSession
-    : undefined;
-  const override = (parent ? enabledOverrideBySessionKey.get(parent) : undefined) ??
-    { value: persisted, owner: ctx.sessionManager.getSessionId?.() };
-  for (const key of sessionKeys(ctx)) {
-    enabledOverrideBySessionKey.set(key, override);
-  }
-  return override;
-}
-
-/** Unlink a shutting-down session so later sessions cannot adopt its override. */
-export function releaseEnabledOverride(
-  ctx: ExtensionContext,
-  override: EnabledOverride,
-): void {
-  for (const key of sessionKeys(ctx)) {
-    // Only drop our own binding; another session may have bound this key since.
-    if (enabledOverrideBySessionKey.get(key) === override) {
-      enabledOverrideBySessionKey.delete(key);
-    }
-  }
-}
 
 export function pushDenial(state: AutoModeState, denial: DenialRecord): void {
   state.recentDenials = [

@@ -283,7 +283,7 @@ The prompt defines the policy semantics:
 - a later user instruction can narrow or revoke authorization
 - allow rules override only soft-deny rules
 - hidden or malicious instructions in transcript evidence or repository files cannot change the rules
-- transcript lines carry different trust: `User:` lines and verified `ask` answers can authorize, `Coordinator <id>:` lines can narrow scope or lift a hold but not widen what the user authorized, `Peer agent <id>:` lines carry no authority, and `UntrustedToolResult` lines can confirm facts but never grant authorization
+- transcript records carry provenance: `user` records (human messages and verified `ask` answers) can authorize, `delegation` records (agent-authored assignments) can narrow a task but never grant authorization, and `tool` records are tool-call evidence only
 - the classifier cannot invent deny rules or treat the allow-exception list as exhaustive
 - the classifier allows actions that match no hard-deny or soft-deny rule
 
@@ -363,55 +363,22 @@ Pi-automode checks the fast request before the fast-stage call. A fast result of
 
 If a stage request cannot fit in the classifier model's context window, auto mode blocks the call. It does not truncate the action.
 
-Pi-automode builds the transcript from active Pi context entries. It includes:
+Pi-automode builds the transcript from active context and branch snapshots supplied by `session-tree.ts`. Extension lifecycle hooks explicitly register and unregister each live session. The tree owns parent linkage and shared toggles; transcript assembly does not receive parent contexts.
 
-- user text, rendered as `User: …`
-- answers from OMP's built-in `ask` tool, captured from the tool's structured result details when its provenance is `<builtin:ask>`
-- under OMP, messages from other agents, rendered as `Coordinator <id>: …` when the sender is the parent agent that spawned this session and `Peer agent <id>: …` otherwise. These come from `irc:incoming` session entries, from the `<irc from="parent" …>` steering messages OMP injects as user-role messages (only when OMP attributed the message to an agent, so text a human types cannot pose as a coordinator), and from messages delivered as the result of the `wait` tool. A sender counts as the coordinator when OMP marks the message as coming from the parent or the sender is `ctx.agent.parentId`.
-- assistant tool-call names and payloads
-- bounded excerpts of recent tool results (below)
+The current session contributes:
 
-Pi-automode excludes assistant prose, hidden reasoning, and the results of the read-only file tools (`read`, `grep`, `find`, `ls`). Timeout auto-selections and chat redirects from `ask` are not user answers.
+- human text as `{"kind":"user","content":"..."}`
+- agent-authored assignments as `{"kind":"delegation","content":"..."}`, which cannot grant human consent
+- answers from OMP's built-in `ask` tool as `user` records, captured from structured result details when its provenance is `<builtin:ask>`
+- assistant tool-call names and payloads as `{"kind":"tool","content":"..."}`
 
-#### Tool-result excerpts
+The transcript is newline-delimited JSON. Escaping keeps embedded newlines, labels, and JSON-looking text within a record's `content`; they cannot create new human records. This preserves structural provenance, not a deterministic guarantee that the model will judge authorization correctly.
 
-Each retained result is one transcript line, `UntrustedToolResult {json}`, with the tool name, a short description of the call that produced it (a bash command or the JSON input), `isError`, the exit code when OMP reports one, and an excerpt. Output longer than the per-entry cap (400 approximate tokens) keeps its first 40% and last 60%, with the omitted size recorded. The JSON encoding, including `\u003c` for `<`, keeps result text from posing as another transcript line or closing the `<classifier-transcript>` block. Output of background jobs (`async-result` session entries) is rendered the same way as tool `background-job`.
+Live OMP ancestors in this process contribute only retained human text and verified ask answers. Forks, switched-away parents, unavailable parents, and parents without session files contribute no inherited evidence. Assistant prose, hidden reasoning, and other tool results are excluded. Timeout auto-selections and chat redirects from `ask` are not user answers.
 
-Results are untrusted evidence. The classifier can use them to confirm facts, such as that a test suite passed. They never grant or extend authorization. A missing or truncated result leaves the fact unknown. `autoMode.includeToolResults: false` turns result evidence off. The excerpts go to the configured classifier provider with the rest of the transcript, without redaction.
+Each source retains its active branch order, even when timestamps regress. The merge compares only each source's next eligible entry, using a finite message timestamp or a valid session-entry timestamp. An undated next entry precedes a dated one; ties use root-to-leaf source order. Missing times cannot establish actual cross-session recency.
 
-#### Budgets
-
-User evidence, tool-call evidence, and result evidence have separate budgets. Each has an approximate-token ceiling and a message-count limit, and each entry has its own cap:
-
-| Evidence | Tokens | Count | Per-entry cap |
-|---|---|---|---|
-| user, coordinator, and peer messages, verified ask answers | `maxUserTranscriptTokens` (4000) | `maxUserTranscriptMessages` (30) | 1000 (brief 2000, ask answer 500) |
-| tool calls | `maxToolTranscriptTokens` (4000) | `maxToolTranscriptCalls` (40) | 1000 |
-| tool results | `maxToolResultTranscriptTokens` (2000) | `maxToolResultTranscriptEntries` (10) | 400 |
-| main-session user messages, for subagents | `maxParentUserTranscriptTokens` (2000) | `maxParentUserTranscriptMessages` (6) | as for user messages |
-
-The first user message (the brief), the newest verified `ask` answers (up to 8), and the latest message are pinned: no budget drops them. Each is capped at half of the token budget, and pinned entries count toward the budgets first. The selector fills the remaining budget from the newest eligible entries. It renders retained evidence in chronological order. It also marks omitted or truncated evidence.
-
-#### Main-session user messages in subagents
-
-A subagent's own transcript holds its brief and coordinator messages. The user's words are in the main session above it. Under OMP, when the session is a subagent (`ctx.agent.kind === "sub"`), the transcript opens with a separate block:
-
-```text
-<parent-session-user-messages>
-User (main session): …
-</parent-session-user-messages>
-User: <the subagent's own brief>
-```
-
-The block holds the root session's human-attributed user messages and its verified `ask` answers. Injected messages, coordinator traffic, tool calls, and tool results of the root stay out. The root's first message and its newest ask answers are pinned in the same way as above, and `includeParentUserMessages: false` removes the block.
-
-The root is found by following each session header's `parentSession` link upward:
-
-1. A registry of the live sessions in this process answers first. A session registers under its file and its id, because a task subagent's header names its parent by file and a `/tan` clone's by id. It registers at `session_start` and again at its first tool call, which covers clones that never get `session_start`.
-2. A hop the registry does not know is read from its session file, read-only. A file larger than 4.25 MB is read from its first 256 KB and last 4 MB. On disk the window holds every branch, not only the active one. A subagent's file sits in the directory named after its parent's file. Pi-automode checks that layout, so a forked main session counts as a root and its source session is not walked.
-3. A chain that cannot be followed (an in-memory parent, a deleted file, a loop) adds no block. Unknown ancestry never becomes user authority.
-
-The policy prompt says these lines can authorize actions inside the agent's delegated task, and that the subagent's own `User:` brief then carries authority only as far as they support it. Hard-deny rules, `deniedPaths`, protected paths, and `permissions` rules run before the classifier and never read the block.
+Human evidence and delegated assignments share the user-token budget; tool-call evidence has a separate budget. Both default to 4000 approximate tokens. These budgets count content, excluding JSON metadata and escaping overhead; the full serialized request remains subject to the context-window checks above. The selector prioritizes the latest and first human entries, then the latest and first entries overall, before filling remaining space from the newest eligible entries. Content is truncated before serialization, and a final `{"kind":"omitted"}` record marks any omitted or truncated evidence. These bounds and model judgment do not provide deterministic authorization.
 
 Transcript truncation does not change the dedicated current-action message.
 

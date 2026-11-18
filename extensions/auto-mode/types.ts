@@ -71,22 +71,6 @@ export type AutoModeSettings = {
   readOnlyRoots?: unknown;
   maxUserTranscriptTokens?: number;
   maxToolTranscriptTokens?: number;
-  /** Keep at most this many ordinary user, coordinator, and peer messages (default 30). Pinned entries are exempt. */
-  maxUserTranscriptMessages?: number;
-  /** Keep at most this many recent tool calls (default 40). */
-  maxToolTranscriptCalls?: number;
-  /** Send bounded, untrusted excerpts of recent tool results to the classifier (default true). */
-  includeToolResults?: boolean;
-  /** Approximate-token budget for all tool-result excerpts together (default 2000). */
-  maxToolResultTranscriptTokens?: number;
-  /** Keep at most this many recent tool results (default 10). */
-  maxToolResultTranscriptEntries?: number;
-  /** Under an OMP subagent, add the main session's user messages to the classifier context (default true). */
-  includeParentUserMessages?: boolean;
-  /** Approximate-token budget for those messages (default 2000). */
-  maxParentUserTranscriptTokens?: number;
-  /** Keep at most this many of them (default 6). The first brief and ask answers are pinned. */
-  maxParentUserTranscriptMessages?: number;
   environment?: unknown;
   allow?: unknown;
   protectedPaths?: unknown;
@@ -138,14 +122,6 @@ export type EffectiveConfig = {
   readOnlyRoots: string[];
   maxUserTranscriptTokens: number;
   maxToolTranscriptTokens: number;
-  maxUserTranscriptMessages: number;
-  maxToolTranscriptCalls: number;
-  includeToolResults: boolean;
-  maxToolResultTranscriptTokens: number;
-  maxToolResultTranscriptEntries: number;
-  includeParentUserMessages: boolean;
-  maxParentUserTranscriptTokens: number;
-  maxParentUserTranscriptMessages: number;
   environment: string[];
   allow: string[];
   protectedPaths: string[];

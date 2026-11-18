@@ -7,7 +7,6 @@
  */
 
 export * from "./auto-mode/agent-hub.ts";
-export * from "./auto-mode/agent-messages.ts";
 export * from "./auto-mode/ask-forwarding.ts";
 export * from "./auto-mode/classifier.ts";
 export * from "./auto-mode/classifier-errors.ts";
@@ -26,7 +25,6 @@ export * from "./auto-mode/model.ts";
 export * from "./auto-mode/model-choice.ts";
 export * from "./auto-mode/model-selector.ts";
 export * from "./auto-mode/omp.ts";
-export * from "./auto-mode/parent-session.ts";
 export * from "./auto-mode/judge.ts";
 export * from "./auto-mode/strategy.ts";
 export * from "./auto-mode/paths.ts";
@@ -36,8 +34,8 @@ export * from "./auto-mode/search-scope.ts";
 export * from "./auto-mode/read-only-roots.ts";
 export * from "./auto-mode/read-only-bash.ts";
 export * from "./auto-mode/settings-menu.ts";
+export * from "./auto-mode/session-tree.ts";
 export * from "./auto-mode/state.ts";
-export * from "./auto-mode/tool-results.ts";
 export * from "./auto-mode/transcript.ts";
 export * from "./auto-mode/types.ts";
 export * from "./auto-mode/url-schemes.ts";

@@ -158,7 +158,7 @@ The array records both stages, retries, and fail-closed cases. A fast allow has 
 
 ## Privacy
 
-`prompt.context` contains project instructions, transcript evidence, and up to 30 paths that the session created, for both classifier stages. `prompt.action` contains the separate, untruncated current action. Pi-automode logs the final stage instructions separately.
+`prompt.context` contains project instructions, transcript evidence, and up to 30 paths that the session created, for both classifier stages. For OMP workers, this includes retained human instructions and verified ask answers from live ancestor sessions, not only the worker's own messages. Transcript evidence is newline-delimited JSON with `kind` (`user`, `delegation`, or `tool`) and `content` fields. Human instructions and verified ask answers use `user`; agent-authored assignments use `delegation`. Escaping keeps labels, newlines, and record-like text inside content rather than creating new human records. Content is truncated before serialization; a final `{"kind":"omitted"}` record marks omitted or truncated evidence. This preserves structural provenance, not a deterministic authorization guarantee from model judgment. `prompt.action` contains the separate, untruncated current action. Pi-automode logs the final stage instructions separately.
 
 See [Auto-mode classifier flow → What is sent to the classifier](automode-classifier-flow.md#what-is-sent-to-the-classifier) for the evidence assembly rules.
 
@@ -171,6 +171,6 @@ If `classifierModel` uses a cloud provider, the payload leaves the machine. Enab
 - `decision` line: ~0.4–2 KB (driven by `summary`, which carries the tool input, capped at 6 KB).
 - `classifier` line: ~5 KB fixed policy plus loaded project instructions, selected transcript evidence, stage instructions, and recorded responses.
 
-`autoMode.maxUserTranscriptTokens`, `autoMode.maxToolTranscriptTokens`, and `autoMode.maxToolResultTranscriptTokens` limit transcript evidence separately. They default to approximately 4000, 4000, and 2000 tokens. The message-count limits are listed in [Configuration](configuration.md).
+`autoMode.maxUserTranscriptTokens` and `autoMode.maxToolTranscriptTokens` limit transcript content separately. Both fields default to approximately 4000 tokens, excluding JSON metadata and escaping overhead. The full serialized classifier request still undergoes context-window checks.
 
-Pi-automode excludes assistant prose and the results of `read`, `grep`, `find`, and `ls`. Other tool results are logged as bounded `UntrustedToolResult` excerpts, so the log can contain command output. Set `autoMode.includeToolResults` to `false` to keep it out. Provider cache hits can reduce processed or billed input. The log still records the full classifier payload.
+Pi-automode excludes assistant prose and tool results, except verified answers from OMP's built-in `ask` tool. Provider cache hits can reduce processed or billed input. The log still records the full classifier payload.

@@ -50,6 +50,12 @@ For a live local development link instead of a marketplace-cached copy:
 omp plugin link ~/omp-autmode
 ```
 
+To load the checkout for one invocation without installing or bundling it:
+
+```bash
+omp --no-extensions --extension ~/omp-autmode
+```
+
 The upstream npm package `@czottmann/pi-automode` does not contain this fork's Jev integration.
 
 ## Choosing the classifier
@@ -189,6 +195,15 @@ Pi AI requests schema-constrained sampling with `strict: "prefer"`. Supported pr
 Both stages receive the complete current tool input in a dedicated message. Transcript truncation cannot remove action content. If the exact input cannot fit in the classifier context, auto mode blocks the call.
 
 Auto mode records paths that the session's own allowed `mkdir`, `mktemp`, `git clone`, `gh repo clone`, `git worktree add`, and new-file `write` calls created, and lists the 30 newest to the classifier. Cleaning up such a path no longer counts as deleting files that existed before the session, even when the creating call has left the transcript window. A path is recorded only after the call returned without an error and only if it did not exist beforehand. The list does not override permission rules, hard-deny checks, `deniedPaths`, or protected paths. See [Auto-mode classifier flow](docs/automode-classifier-flow.md#paths-created-by-this-session).
+Classifier evidence uses newline-delimited JSON records with `kind` (`user`, `delegation`, or `tool`) and `content` fields. Human instructions and verified built-in `ask` answers use `user`; agent-authored assignments use `delegation`; assistant tool-call payloads use `tool`. JSON escaping keeps embedded newlines, labels, and JSON-looking text inside their original content rather than creating new human records. OMP workers also receive retained human instructions and verified built-in `ask` answers from their live parent sessions in this process. Ancestor tool output and agent-authored assignments are excluded. Human intent anchors take priority over delegated text within the transcript budget. Later human restrictions control; an assignment cannot grant consent or expand human-approved scope.
+
+Evidence content is truncated before JSON serialization. Approximate transcript budgets count content, excluding JSON metadata and escaping overhead; the complete serialized request still undergoes context-window checks. A final `{"kind":"omitted"}` record marks omitted or truncated evidence.
+
+Evidence preserves each session's active branch order, even if its clock moves backward. Across sessions, the next entries are merged by finite message time, falling back to a valid session-entry time. An undated next entry precedes a dated one; ties use root-to-leaf session order. These fallback rules make presentation deterministic, not proof of actual cross-session recency.
+
+This sends retained parent human messages to the configured classifier as well as the worker's own evidence. Forks, switched-away parents, parents outside this process, and parents without session files do not supply inherited evidence. Missing authorization is not inferred from a worker's assignment.
+
+The classifier evaluates the current action's security risk, not code quality or previous denials. Non-secret local diagnostic reads, including SQLite `SELECT` queries, are not production mutations or external disclosures merely because a path contains `production`. Secret exposure and external disclosure rules still apply.
 
 Both stages use a classifier-specific session key. They request short cache retention from providers that support it. A missing model, provider failure, or invalid response blocks the action.
 
@@ -209,6 +224,8 @@ OMP's `eval` tool gets the same checks for the shell commands in its code. Pi-au
 
 Claude Code's real classifier and exact built-in rules are private. This package implements the documented precedence and configuration behavior, with a local classifier prompt and deterministic hard-deny checks.
 
+Classifier authorization depends on retained, token-budgeted evidence and model judgment. Relevant restrictions can be omitted or truncated, and missing timestamps cannot establish cross-session chronology. Intent anchors and fail-closed classifier errors do not turn this into a deterministic authorization boundary.
+
 ## Development
 
 ```bash
@@ -218,6 +235,8 @@ npm pack --dry-run
 ```
 
 Bash permission and hard-deny checks use `unbash` 4.0.10, included under `extensions/vendor/unbash` with Lars Kappert's ISC license. To upgrade it, update the exact `devDependencies.unbash` version, run `npm install`, then run `npm run vendor:unbash` and commit the refreshed distribution with its lockfile. Verify a dependency-free installation with `node --import tsx --test --test-name-pattern='marketplace copy' tests/*.test.ts`.
+
+`extensions/auto-mode/session-tree.ts` owns live session registration, parent linkage, and shared toggles. Extension lifecycle hooks explicitly register and unregister each instance; transcript assembly receives evidence snapshots, not parent contexts. `state.ts` owns persisted counters, denial history, and status formatting.
 
 The tests cover these safety-sensitive areas:
 

@@ -21,16 +21,8 @@ import {
   DEFAULT_FAST_CLASSIFIER_MAX_TOKENS,
   DEFAULT_HARD_DENY,
   DEFAULT_HEADLESS_ASK,
-  DEFAULT_INCLUDE_PARENT_USER_MESSAGES,
-  DEFAULT_INCLUDE_TOOL_RESULTS,
   DEFAULT_LOG_CONFIG,
-  DEFAULT_MAX_PARENT_USER_TRANSCRIPT_MESSAGES,
-  DEFAULT_MAX_PARENT_USER_TRANSCRIPT_TOKENS,
-  DEFAULT_MAX_TOOL_RESULT_TRANSCRIPT_ENTRIES,
-  DEFAULT_MAX_TOOL_RESULT_TRANSCRIPT_TOKENS,
-  DEFAULT_MAX_TOOL_TRANSCRIPT_CALLS,
   DEFAULT_MAX_TOOL_TRANSCRIPT_TOKENS,
-  DEFAULT_MAX_USER_TRANSCRIPT_MESSAGES,
   DEFAULT_MAX_USER_TRANSCRIPT_TOKENS,
   DEFAULT_PROTECTED_PATHS,
   DEFAULT_READ_ONLY_ROOTS,
@@ -361,14 +353,6 @@ export function validateSettingsFile(
         "readOnlyRoots",
         "maxUserTranscriptTokens",
         "maxToolTranscriptTokens",
-        "maxUserTranscriptMessages",
-        "maxToolTranscriptCalls",
-        "includeToolResults",
-        "maxToolResultTranscriptTokens",
-        "maxToolResultTranscriptEntries",
-        "includeParentUserMessages",
-        "maxParentUserTranscriptTokens",
-        "maxParentUserTranscriptMessages",
         "environment",
         "allow",
         "protectedPaths",
@@ -482,18 +466,9 @@ export function validateSettingsFile(
         diagnostics,
       );
       for (
-        const key of ["includeToolResults", "includeParentUserMessages"] as const
-      ) {
-        if (hasOwn(autoMode, key) && typeof autoMode[key] !== "boolean") {
-          diagnostics.push(`${source}: autoMode.${key} must be a boolean`);
-        }
-      }
-      for (
         const key of [
           "maxUserTranscriptTokens",
           "maxToolTranscriptTokens",
-          "maxToolResultTranscriptTokens",
-          "maxParentUserTranscriptTokens",
         ] as const
       ) {
         if (
@@ -502,23 +477,6 @@ export function validateSettingsFile(
         ) {
           diagnostics.push(
             `${source}: autoMode.${key} must be an integer of at least 32`,
-          );
-        }
-      }
-      for (
-        const key of [
-          "maxUserTranscriptMessages",
-          "maxToolTranscriptCalls",
-          "maxToolResultTranscriptEntries",
-          "maxParentUserTranscriptMessages",
-        ] as const
-      ) {
-        if (
-          hasOwn(autoMode, key) &&
-          (!Number.isInteger(autoMode[key]) || Number(autoMode[key]) < 1)
-        ) {
-          diagnostics.push(
-            `${source}: autoMode.${key} must be an integer of at least 1`,
           );
         }
       }
@@ -779,10 +737,6 @@ function validTranscriptBudget(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) >= 32;
 }
 
-function validTranscriptCount(value: unknown): value is number {
-  return Number.isInteger(value) && Number(value) >= 1;
-}
-
 function validFastClassifierBudget(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) >= 16;
 }
@@ -846,42 +800,6 @@ function applyAutoModeScalars(
       )
       ? settings.maxToolTranscriptTokens
       : base.maxToolTranscriptTokens,
-    maxUserTranscriptMessages: validTranscriptCount(
-        settings.maxUserTranscriptMessages,
-      )
-      ? settings.maxUserTranscriptMessages
-      : base.maxUserTranscriptMessages,
-    maxToolTranscriptCalls: validTranscriptCount(
-        settings.maxToolTranscriptCalls,
-      )
-      ? settings.maxToolTranscriptCalls
-      : base.maxToolTranscriptCalls,
-    includeToolResults: typeof settings.includeToolResults === "boolean"
-      ? settings.includeToolResults
-      : base.includeToolResults,
-    maxToolResultTranscriptTokens: validTranscriptBudget(
-        settings.maxToolResultTranscriptTokens,
-      )
-      ? settings.maxToolResultTranscriptTokens
-      : base.maxToolResultTranscriptTokens,
-    maxToolResultTranscriptEntries: validTranscriptCount(
-        settings.maxToolResultTranscriptEntries,
-      )
-      ? settings.maxToolResultTranscriptEntries
-      : base.maxToolResultTranscriptEntries,
-    includeParentUserMessages: typeof settings.includeParentUserMessages === "boolean"
-      ? settings.includeParentUserMessages
-      : base.includeParentUserMessages,
-    maxParentUserTranscriptTokens: validTranscriptBudget(
-        settings.maxParentUserTranscriptTokens,
-      )
-      ? settings.maxParentUserTranscriptTokens
-      : base.maxParentUserTranscriptTokens,
-    maxParentUserTranscriptMessages: validTranscriptCount(
-        settings.maxParentUserTranscriptMessages,
-      )
-      ? settings.maxParentUserTranscriptMessages
-      : base.maxParentUserTranscriptMessages,
     log: mergeLog(base.log, settings.log),
   };
 }
@@ -1003,14 +921,6 @@ export function buildEffectiveConfigFromSources(
     classifierTimeoutMs: DEFAULT_CLASSIFIER_TIMEOUT_MS,
     maxUserTranscriptTokens: DEFAULT_MAX_USER_TRANSCRIPT_TOKENS,
     maxToolTranscriptTokens: DEFAULT_MAX_TOOL_TRANSCRIPT_TOKENS,
-    maxUserTranscriptMessages: DEFAULT_MAX_USER_TRANSCRIPT_MESSAGES,
-    maxToolTranscriptCalls: DEFAULT_MAX_TOOL_TRANSCRIPT_CALLS,
-    includeToolResults: DEFAULT_INCLUDE_TOOL_RESULTS,
-    maxToolResultTranscriptTokens: DEFAULT_MAX_TOOL_RESULT_TRANSCRIPT_TOKENS,
-    maxToolResultTranscriptEntries: DEFAULT_MAX_TOOL_RESULT_TRANSCRIPT_ENTRIES,
-    includeParentUserMessages: DEFAULT_INCLUDE_PARENT_USER_MESSAGES,
-    maxParentUserTranscriptTokens: DEFAULT_MAX_PARENT_USER_TRANSCRIPT_TOKENS,
-    maxParentUserTranscriptMessages: DEFAULT_MAX_PARENT_USER_TRANSCRIPT_MESSAGES,
     environment: [...DEFAULT_ENVIRONMENT],
     allow: [...DEFAULT_ALLOW],
     protectedPaths: [...DEFAULT_PROTECTED_PATHS],
