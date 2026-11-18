@@ -260,14 +260,20 @@ function selectUserEntries(
   const priorityAnchors = humans.length > 0
     ? new Set([humans.at(-1)!, humans[0]!])
     : anchors;
-  const anchorShare = Math.min(
-    MAX_USER_ENTRY_TOKENS,
-    Math.floor(maxTokens / priorityAnchors.size),
-  );
+  // The latest human message carries the current instructions; long feedback
+  // must not lose its middle to the cap that bounds ordinary entries.
+  const entryCap = (index: number): number =>
+    index === humans.at(-1)
+      ? Math.max(MAX_USER_ENTRY_TOKENS, Math.floor(maxTokens / 2))
+      : MAX_USER_ENTRY_TOKENS;
   const reservations = new Map(
     [...priorityAnchors].map((index) => [
       index,
-      Math.min(anchorShare, approximateTokenCount(users[index]!.text)),
+      Math.min(
+        entryCap(index),
+        Math.floor(maxTokens / priorityAnchors.size),
+        approximateTokenCount(users[index]!.text),
+      ),
     ]),
   );
   let reservedTokens = [...reservations.values()].reduce(
@@ -286,7 +292,7 @@ function selectUserEntries(
     if (available <= 0) return;
     const result = truncateToTokenCap(
       entry.text,
-      Math.min(MAX_USER_ENTRY_TOKENS, available),
+      Math.min(entryCap(index), available),
     );
     selectedEntries.set(index, { ...entry, text: result.text });
     usedTokens += approximateTokenCount(result.text);
@@ -398,12 +404,14 @@ export function loadedContextFromSystemPromptOptions(options: unknown): string {
       | undefined
   )?.contextFiles;
   if (!Array.isArray(contextFiles)) return "";
+  // Repository files are untrusted: `<` is escaped so they cannot close the
+  // instructions block or open fake transcript evidence.
   return contextFiles
     .map(
       (file) =>
         `# ${file.path ?? "context"}\n${
           truncateMiddle(file.content ?? "", 4000)
-        }`,
+        }`.replaceAll("<", "\\u003c"),
     )
     .join("\n\n");
 }

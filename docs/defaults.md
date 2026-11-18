@@ -122,7 +122,7 @@ Classifier evidence has separate approximate-token budgets for human/delegated e
 - `maxUserTranscriptTokens`: 4000
 - `maxToolTranscriptTokens`: 4000
 
-The selector prioritizes the latest and first human instructions or verified ask answers, then the latest and first entries overall, including delegated assignments. It fills the remaining space from the newest eligible entries. Retained human evidence from live OMP ancestors shares this budget; delegated text never becomes human authorization.
+The selector prioritizes the latest and first human instructions or verified ask answers, then the latest and first entries overall, including delegated assignments. It fills the remaining space from the newest eligible entries. Retained human evidence from live OMP ancestors shares this budget; delegated text never becomes human authorization. The latest human message may use up to half of `maxUserTranscriptTokens`; other entries are capped at 1000 approximate tokens.
 
 The selector limits individual entries and truncates content before serialization. The transcript uses newline-delimited JSON records with `kind` (`user`, `delegation`, or `tool`) and `content` fields; a final `{"kind":"omitted"}` record marks omitted or truncated evidence. Escaped content cannot create new human records. It excludes assistant prose and tool results, except verified answers from OMP's built-in `ask` tool.
 

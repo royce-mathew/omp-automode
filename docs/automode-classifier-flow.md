@@ -336,6 +336,8 @@ ${buildClassifierTranscript(...) || "(none)"}
 </classifier-transcript>
 ```
 
+`loadedContext` holds the context files the host loaded, such as `AGENTS.md`, each cut to 4000 characters. Their `<` characters are written as `\u003c`, so a repository file cannot close the block or start a `<classifier-transcript>` of its own.
+
 When `headlessAsk` is `classifier` and a `permissions.ask` rule matched in a session without UI, the message ends with an `<extension-notes>` block. The block holds a note from the extension, not from the transcript:
 
 ```text
