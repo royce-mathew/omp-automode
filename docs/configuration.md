@@ -201,7 +201,7 @@ The analysis is a static allowlist and gives no sandbox guarantee.
 
 - Reads are limited by `deniedPaths` only. A secret that is not listed there, such as a token in a project file, is readable and its content reaches the model. List sensitive locations in `deniedPaths`.
 - The check happens before the command runs. A file or symlink that changes in between is not detected.
-- `git` runs with the repository's own configuration. A repository whose `.git/config` sets `diff.external`, a `textconv` driver, or `core.fsmonitor` can run a program during `git status`, `git diff`, `git log -p`, `git show`, or `git blame`. `git status` and `git diff` can also refresh `.git/index`.
+- `git` runs with the repository's own configuration. When the repository's `config` (or a linked worktree's shared `config` and `config.worktree`) mentions a key that can run a program, such as `core.fsmonitor`, `diff.external`, a `textconv` or `filter` driver, a pager, an alias, or an `include`, the command goes to the classifier. Global git configuration is not checked. `git status` and `git diff` can also refresh `.git/index`.
 - Flag tables follow GNU coreutils, ripgrep, and git. A different implementation of the same name, a shell function, or an alias that shadows an allowlisted binary in the session shell is not detected.
 - `git remote -v` and `git config --get remote.<name>.url` print remote URLs, which can embed credentials.
 

@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
   parse,
@@ -306,6 +306,45 @@ function findGitRoot(start: string): string {
     const parent = dirname(current);
     if (parent === current) return start;
     current = parent;
+  }
+}
+
+/**
+ * Repository config that makes read-only subcommands run programs: `status`
+ * runs `core.fsmonitor` and clean filters, `diff`/`log -p`/`blame` run textconv
+ * and external diff drivers. Includes are not followed, so they count too.
+ * Over-matching only sends the command to the classifier.
+ */
+const GIT_EXECUTING_CONFIG =
+  /fsmonitor|pager|external|textconv|filter|command|hookspath|include|alias|editor|program|helper/i;
+
+/** Config files of the repository that contains `cwd`, including a linked worktree's shared config. */
+function gitConfigFiles(cwd: string): string[] {
+  const dotGit = join(findGitRoot(cwd), ".git");
+  if (!existsSync(dotGit)) return [];
+  let gitDir = dotGit;
+  if (!statSync(dotGit).isDirectory()) {
+    const link = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"))?.[1];
+    if (link === undefined) reject("unrecognised .git file");
+    gitDir = resolve(dirname(dotGit), link.trim());
+  }
+  const commonDirFile = join(gitDir, "commondir");
+  const commonDir = existsSync(commonDirFile)
+    ? resolve(gitDir, readFileSync(commonDirFile, "utf8").trim())
+    : gitDir;
+  return [join(commonDir, "config"), join(gitDir, "config.worktree")];
+}
+
+function rejectExecutingGitConfig(cwd: string): void {
+  try {
+    for (const file of gitConfigFiles(cwd)) {
+      if (existsSync(file) && GIT_EXECUTING_CONFIG.test(readFileSync(file, "utf8"))) {
+        reject(`git repository config can run programs: ${file}`);
+      }
+    }
+  } catch (error) {
+    if (error instanceof Reject) throw error;
+    reject("git repository config cannot be read");
   }
 }
 
@@ -1127,6 +1166,7 @@ function runGit(args: readonly string[], env: ShellEnv): void {
     current = enterDirectory(current, directory);
     index += 1;
   }
+  rejectExecutingGitConfig(current.cwd);
   const subcommand = args[index];
   if (subcommand === undefined) reject("git needs a subcommand");
   const rest = args.slice(index + 1);

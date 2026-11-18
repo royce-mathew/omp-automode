@@ -889,3 +889,38 @@ test("quoting tricks cannot change which binary is checked", () => {
 		fixture.cleanup();
 	}
 });
+
+test("git is not read-only when repository config can make it run programs", () => {
+	const fixture = createFixture();
+	try {
+		const gitDir = join(fixture.project, ".git");
+		mkdirSync(gitDir);
+		writeFileSync(join(gitDir, "config"), "[core]\n\tbare = false\n");
+		assertReadOnly(fixture, "git status");
+
+		for (const config of [
+			"[core]\n\tfsmonitor = /tmp/hook.sh\n",
+			"[diff \"x\"]\n\ttextconv = /tmp/conv.sh\n",
+			"[filter \"lfs\"]\n\tclean = /tmp/clean.sh\n",
+			"[include]\n\tpath = /tmp/other.config\n",
+		]) {
+			writeFileSync(join(gitDir, "config"), config);
+			for (const command of ["git status", "git diff", "git log -p", "git -C src status"]) {
+				const result = analyze(fixture, command);
+				assert.equal(result.readOnly, false, `${command} with ${config}`);
+			}
+		}
+
+		// A linked worktree reads the shared config through `.git` and `commondir`.
+		writeFileSync(join(gitDir, "config"), "[core]\n\tfsmonitor = /tmp/hook.sh\n");
+		const worktree = join(fixture.base, "worktree");
+		const worktreeGitDir = join(gitDir, "worktrees", "wt");
+		mkdirSync(worktreeGitDir, { recursive: true });
+		mkdirSync(worktree);
+		writeFileSync(join(worktreeGitDir, "commondir"), "../..\n");
+		writeFileSync(join(worktree, ".git"), `gitdir: ${worktreeGitDir}\n`);
+		assert.equal(analyze(fixture, "git status", worktree).readOnly, false);
+	} finally {
+		fixture.cleanup();
+	}
+});
