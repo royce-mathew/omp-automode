@@ -1258,10 +1258,10 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
       }
 
       classifierCallsInFlight += 1;
-      updateUi(ctx);
-      hubEntry?.classifyStarted(event.toolName, summary);
       let decision: ClassifyResult;
       try {
+        updateUi(ctx);
+        hubEntry?.classifyStarted(event.toolName, summary);
         decision = await classify(
           ctx,
           cfg,
