@@ -14,10 +14,10 @@ For each Pi `tool_call` event, the extension does this:
 6. If the user declines or nobody can be asked, block the call.
 7. Mark an accepted ask call for required classifier review.
 8. Run deterministic hard-deny checks.
-9. If no accepted ask rule requires review, let the extension-owned `automode_inspect` tool run locally.
+9. If no accepted ask rule requires review, let the extension-owned `automode_inspect` tool run locally, including a Bash call that only runs it as an OMP tool command.
 10. Run path-deny checks, including recursive search scopes and symlink aliases. OMP's `grep` is narrowed with exclusions instead of blocked when a scope can reach a denied path.
 11. If an ask rule was accepted, skip all deterministic allow tiers.
-12. Otherwise, apply the read-only-root, `scheme://`, inside-working-directory, `permissions.allow`, read-only Bash, and read-only built-in tiers in that order. The read-only-root and read-only Bash tiers apply only when `readOnlyRoots` or `allowReadOnlyBash` is set.
+12. Otherwise, apply the read-only-root, `scheme://`, inside-working-directory, `permissions.allow`, read-only Bash, and read-only built-in tiers in that order. The read-only-root and read-only Bash tiers apply only when `readOnlyRoots` or `allowReadOnlyBash` is set. Then allow a tool that OMP ran as a Bash tool command when the classifier allowed that Bash call (see [OMP tool commands](#omp-tool-commands)).
 13. For a configured `typesafe/jev-*` classifier, evaluate typed policy questions in one native request.
 14. Otherwise, under `classifierStrategy: "hybrid"` (OMP only), ask a calibrated native judge from the `judge` role chain. It can only approve; a confident approval allows the call.
 15. Otherwise, run the detailed review directly (`detailed`, or `hybrid` after the judge), or the one-token conservative filter followed by structured review when requested (`staged`, the default).
@@ -245,6 +245,19 @@ A `scheme://` path is not a filesystem path. Pi-automode splits file-tool paths 
 By default, both fields are off and `permissions.allow` is empty. Thus, every write and edit reaches the classifier.
 
 Two more opt-in tiers cover reads. `readOnlyRoots` lets `read`, `grep`, `find`, and `ls` calls inside the listed directories skip the classifier outside the working directory. `allowReadOnlyBash: true` lets a Bash command skip the classifier when static analysis shows that it only reads files. Both run after every denial check and never apply to a call that an accepted ask rule sent to the classifier. See [Read-only Bash and read-only roots](configuration.md#read-only-bash-and-read-only-roots).
+
+### OMP tool commands
+
+OMP 19.1 and later run discoverable tools such as `lsp`, `github`, `ast_edit`, and extension or MCP tools as Bash commands while `tools.commands` is on. One call produces two `tool_call` events: the `bash` call with the command line, then the wrapped tool under its own name with id `<bash call id>:cmd:<n>`.
+
+Pi-automode reviews the `bash` call like any other. A default allow rule tells the classifier which tool commands only read. When the classifier allows the `bash` call, the wrapped call still runs every check up to and including the allow tiers, then skips the classifier and is logged with kind `tool-command`. It goes to the classifier when:
+
+- the `bash` call was allowed by `permissions.allow` or another deterministic tier, or was blocked;
+- the script does not name the tool literally, for example `"$CMD" --op pr_merge`;
+- the `bash` call has already returned, as a background job can;
+- an accepted `permissions.ask` rule matches the wrapped call.
+
+`permissions.deny` and `permissions.ask` rules for the wrapped tool's name, deterministic hard-deny checks, and `deniedPaths` apply to the wrapped call as they do to a direct call.
 
 ## Protected paths
 
@@ -535,7 +548,7 @@ When UI is available, the extension updates the footer status and shows a warnin
 
 ## Agent inspection tool
 
-`automode_inspect` exposes `status`, `config`, `defaults`, and `denials` views to the agent. The extension verifies the source of the registered tool before it applies the exemption.
+`automode_inspect` exposes `status`, `config`, `defaults`, and `denials` views to the agent. The extension verifies the source of the registered tool before it applies the exemption. The exemption also covers a Bash call that is exactly one `automode_inspect …` command with no prefix assignment, redirect, substitution, or second command, so the tool stays usable as an OMP tool command when the classifier is unavailable.
 
 A tool from another extension with the same name still uses normal enforcement. Every view is read-only. After local checks pass, the hook returns before classifier routing and state updates.
 
