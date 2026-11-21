@@ -24,7 +24,7 @@ An inspection call is not an unrestricted escape hatch.
 1. `permissions.deny` runs first.
 2. `permissions.ask` runs next.
 3. Deterministic hard-deny checks run next.
-4. The extension bypasses classifier routing only for its own registered `automode_inspect` tool.
+4. The extension bypasses classifier routing only for its own registered `automode_inspect` tool, including a Bash call that is exactly one `automode_inspect …` command, as OMP 19.1 runs it when tool commands are on.
 
 If a local check blocks the call, pi-automode records it as a blocked action. If the call passes, inspection does not change counters or state. With logging enabled, a passing call writes one `read-only` decision entry.
 

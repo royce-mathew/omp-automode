@@ -903,3 +903,50 @@ export function analyzeBash(
 
   return analysis;
 }
+
+const SINGLE_SIMPLE_COMMAND_STRUCTURE = [
+  "script:1",
+  "node:Statement:foreground:0",
+  "node:Command:0:0",
+];
+
+/**
+ * Returns the command name when the whole script is one plain foreground
+ * command: no environment prefix, wrapper, redirect, pipeline, list,
+ * subshell, command substitution, or background job.
+ */
+export function singleSimpleCommandName(
+  analysis: BashAnalysis,
+): string | undefined {
+  if (analysis.errors.length > 0 || analysis.commands.length !== 1) {
+    return undefined;
+  }
+  const structure = analysis.structure;
+  if (
+    structure.length !== SINGLE_SIMPLE_COMMAND_STRUCTURE.length ||
+    structure.some((entry, i) => entry !== SINGLE_SIMPLE_COMMAND_STRUCTURE[i])
+  ) {
+    return undefined;
+  }
+  const command = analysis.commands[0];
+  if (command.dynamicName || command.name !== command.words[0]) {
+    return undefined;
+  }
+  return command.name;
+}
+
+/** Literal command names the script can run, including wrapped ones (`command lsp`). */
+export function literalCommandNames(analysis: BashAnalysis): Set<string> {
+  const names = new Set<string>();
+  for (const command of analysis.commands) {
+    if (command.dynamicName) {
+      continue;
+    }
+    for (const name of [command.name, command.effectiveCommand.name]) {
+      if (name !== undefined) {
+        names.add(name);
+      }
+    }
+  }
+  return names;
+}

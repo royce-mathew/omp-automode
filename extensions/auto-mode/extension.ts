@@ -35,7 +35,12 @@ import {
   type SessionRecord,
 } from "./ask-forwarding.ts";
 import { classifierCooldowns } from "./classifier-fallback.ts";
-import { analyzeBash, type BashAnalysis } from "./bash.ts";
+import {
+  analyzeBash,
+  type BashAnalysis,
+  literalCommandNames,
+  singleSimpleCommandName,
+} from "./bash.ts";
 import {
   embeddedNote,
   evalClassifierHints,
@@ -54,7 +59,9 @@ import {
   DEFAULT_SOFT_DENY,
   EVAL_TOOL,
   PATH_BEARING_TOOLS,
+  MAX_TRACKED_BASH_CALLS,
   READ_ONLY_TOOLS,
+  TOOL_COMMAND_CALL_ID,
 } from "./constants.ts";
 import {
   type GlobalConfigPreparation,
@@ -473,6 +480,30 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
     /** Revised `grep` input per tool call: denied paths excluded from the search. */
     const narrowedSearchInputs = new Map<string, Record<string, unknown>>();
 
+    /**
+     * Literal command names of each classifier-allowed `bash` call, by tool
+     * call id. OMP 19.1+ runs mounted tools as bash commands and emits a
+     * second `tool_call` for the wrapped tool, with id `<bash id>:cmd:<n>`.
+     */
+    const bashCommandNames = new Map<string, Set<string>>();
+
+    function rememberBashCommands(toolCallId: string, analysis: BashAnalysis): void {
+      if (bashCommandNames.size >= MAX_TRACKED_BASH_CALLS) {
+        const [oldest] = bashCommandNames.keys();
+        if (oldest !== undefined) {
+          bashCommandNames.delete(oldest);
+        }
+      }
+      bashCommandNames.set(toolCallId, literalCommandNames(analysis));
+    }
+
+    /** Whether a classifier-allowed `bash` call ran this tool by its literal name. */
+    function ranByReviewedBash(event: ToolCallEvent): boolean {
+      const bashId = TOOL_COMMAND_CALL_ID.exec(event.toolCallId ?? "")?.[1];
+      return bashId !== undefined &&
+        bashCommandNames.get(bashId)?.has(event.toolName) === true;
+    }
+
     function persist(): void {
       // Without `session_start` OMP never wired this session's runtime
       // actions, so `appendEntry` throws; the state stays in memory.
@@ -759,16 +790,22 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
       return undefined;
     });
 
+    pi.on("tool_result", (event) => {
+      bashCommandNames.delete(event.toolCallId);
+      return undefined;
+    });
+
     async function evaluateToolCall(event: ToolCallEvent, ctx: ExtensionContext) {
       // Enforcement order:
       // 1. permission deny/ask rules,
       // 2. deterministic hard-deny checks that never consult the model,
-      // 3. extension-owned read-only inspection tool,
+      // 3. extension-owned read-only inspection tool, also run as a bash command,
       // 4. deterministic path denials,
       // 5. accepted ask rules force classifier review and skip all allow tiers,
       // 6. inside-CWD, permissions.allow, read-only-root, and read-only allow tiers,
       // 7. read-only bash allow tier (`allowReadOnlyBash`),
-      // 8. classifier for every remaining action, fail-closed on setup/parse errors.
+      // 8. classifier for every remaining action, fail-closed on setup/parse errors,
+      //    except a tool command whose bash call the classifier allowed.
       ensureSession(ctx);
       const cfg = effectiveConfig();
       if (!cfg.enabled) return undefined;
@@ -805,8 +842,6 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
         }, logCtx);
       }
 
-      const isOwnedInspection = event.toolName === INSPECT_TOOL &&
-        ownsInspectionTool();
       let bashAnalysis: BashAnalysis | undefined;
       if (event.toolName === "bash") {
         const source = typeof input.command === "string" ? input.command : "";
@@ -829,6 +864,10 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
           };
         }
       }
+      const isOwnedInspection = (event.toolName === INSPECT_TOOL ||
+        (bashAnalysis !== undefined &&
+          singleSimpleCommandName(bashAnalysis) === INSPECT_TOOL)) &&
+        ownsInspectionTool();
       const evalChecks: EvalChecks | undefined = event.toolName === EVAL_TOOL
         ? prepareEvalChecks(input, options.analyzeBash ?? analyzeBash)
         : undefined;
@@ -1257,6 +1296,18 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
         );
       }
 
+      // The classifier already judged the bash command line that ran this tool.
+      if (!askRequiresClassifier && ranByReviewedBash(event)) {
+        return allow(
+          ctx,
+          "tool-command",
+          "Tool command run by a classifier-allowed bash call",
+          event.toolName,
+          summary,
+          logCtx,
+        );
+      }
+
       classifierCallsInFlight += 1;
       let decision: ClassifyResult;
       try {
@@ -1285,6 +1336,9 @@ export function createPiAutomode(options: PiAutomodeOptions = {}) {
       logClassifierIo(decision, logCtx);
       if (decision.decision === "allow") {
         state.classifierAllowed += 1;
+        if (bashAnalysis !== undefined && event.toolCallId) {
+          rememberBashCommands(event.toolCallId, bashAnalysis);
+        }
         return allow(
           ctx,
           "classifier",

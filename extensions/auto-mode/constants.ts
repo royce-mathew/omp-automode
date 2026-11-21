@@ -85,6 +85,7 @@ export const DEFAULT_ENVIRONMENT = [
 /** Built-in allow exceptions. These only override soft-deny rules, never hard-deny rules. */
 export const DEFAULT_ALLOW = [
   "Read-only operations: file inspection, listing, searching, GET requests, and state queries that do not expose secrets in URLs or logs.",
+  "Read-only OMP tool commands: Bash commands that run a session tool by name, namely `lsp` with a diagnostics, definition, type_definition, implementation, references, hover, symbols, status, or capabilities action, `ast_grep`, `recall`, `reflect`, `automode_inspect`, and any tool command run with only `--help`. Other tool commands, such as `ast_edit`, `github`, `debug`, `retain`, `memory_edit`, or `lsp` rename and code actions, are judged by what they do.",
   "Local development operations inside the working tree: creating, editing, building, testing, linting, formatting, and deleting files created during the current task. This also includes modifying or deleting pre-existing files when a direct user authorization names the task, one repository or worktree, permitted path scopes, and the allowed operation.",
   "Developing this extension's own source: editing, building, testing, and committing in a git clone or worktree that is not listed under Active controls, when the user asked to work on that code. The loaded extension, the active config files, and the environment policy are never covered.",
   "Declared dependencies: installing packages already declared in package manifests or lockfiles with standard package-manager commands.",
@@ -219,6 +220,12 @@ export const PROFILE_FILES = new Set([
 ]);
 
 export const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
+
+/** OMP 19.1+ id of a tool that a `bash` call ran as a command; group 1 is the bash call's id. */
+export const TOOL_COMMAND_CALL_ID = /^(.+):cmd:\d+$/;
+
+/** Running `bash` calls whose command names are kept for their tool commands. */
+export const MAX_TRACKED_BASH_CALLS = 64;
 
 /** OMP's code-execution tool; its Python/JavaScript cells are scanned for embedded shell commands. */
 export const EVAL_TOOL = "eval";

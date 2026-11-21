@@ -73,13 +73,13 @@ Pi-automode writes one `decision` entry for each tool-call decision. Each allowe
 | `cwd` | working directory |
 | `tool` | tool name, for example `bash` or `write` |
 | `summary` | `actionSummary` — tool name + input JSON (truncated) |
-| `kind` | enforcement path: `permissions.deny`, `permissions.ask`, `deterministic-hard-deny`, `deterministic-path-deny`, `permissions.allow`, `inside-working-directory`, `url-scheme`, `classifier`, `classifier-unavailable`, `read-only`, `read-only-bash`, `read-only-root`, or `setup`. `automode_inspect` calls log as `read-only`. |
+| `kind` | enforcement path: `permissions.deny`, `permissions.ask`, `deterministic-hard-deny`, `deterministic-path-deny`, `permissions.allow`, `inside-working-directory`, `url-scheme`, `classifier`, `classifier-unavailable`, `read-only`, `read-only-bash`, `read-only-root`, `tool-command`, or `setup`. `automode_inspect` calls log as `read-only`. `tool-command` is a tool that OMP ran as a Bash command after the classifier allowed that Bash call. |
 | `outcome` | `allow` or `block` |
 | `reason` | the reason string (classifier reason, or the deterministic/permission reason) |
 | `classifierModel` | the configured classifier model for a classifier-routed decision |
 | `reasoning` | classifier reasoning mode and requested or effective level. See the examples below. |
 | `durationMs` | milliseconds from the tool call reaching auto mode to this decision. It includes any wait on a `permissions.ask` prompt. |
-| `stage` | what decided: `permissions`, `hard-deny`, `path`, `inside-cwd`, `url-scheme`, `allow`, `read-only` (also the stage of `read-only-bash` and `read-only-root` decisions), `classifier-judge`, `classifier-fast`, or `classifier-detailed`. It is absent for `setup` blocks and for a classifier decision that never reached a model call. For a classifier decision it names the last stage that ran, so `classifier-fast` is a fast allow or a fast-stage failure, and `classifier-judge` is a hybrid judge approval. |
+| `stage` | what decided: `permissions`, `hard-deny`, `path`, `inside-cwd`, `url-scheme`, `allow`, `read-only` (also the stage of `read-only-bash` and `read-only-root` decisions), `classifier-judge`, `classifier-fast`, or `classifier-detailed`. It is absent for `setup` blocks, `tool-command` allows, and a classifier decision that never reached a model call. For a classifier decision it names the last stage that ran, so `classifier-fast` is a fast allow or a fast-stage failure, and `classifier-judge` is a hybrid judge approval. |
 | `agent` | `{ id, name, kind }` of the agent that issued the call. OMP reports it (`kind` is `main` or `sub`). Pi reports no agent, so the field is absent. |
 | `hasUI` | whether the session had an interactive UI. A headless session cannot answer `permissions.ask`. |
 | `errorKind` | present only when the classifier failed closed instead of judging the action: `rate-limit`, `timeout`, `auth`, `server`, `aborted`, `invalid-response`, `context-limit`, or `no-classifier`. A normal classifier denial has no `errorKind`. The error text itself is never logged. |

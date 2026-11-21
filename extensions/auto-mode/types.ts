@@ -173,7 +173,8 @@ export type DecisionKind =
   | "read-only-bash"
   | "read-only-root"
   | "inside-working-directory"
-  | "url-scheme";
+  | "url-scheme"
+  | "tool-command";
 
 /**
  * Why a classifier call failed closed. `rate-limit`, `timeout`, `auth`,
